@@ -13,6 +13,10 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("ddl #%d: %w", i, err)
 		}
 	}
+	// Drop budget tables if they exist (cleanup from old schema)
+	for _, t := range []string{"budget_cells", "budget_rows", "budget_columns"} {
+		db.Exec("DROP TABLE IF EXISTS " + t)
+	}
 	if err := seed(db); err != nil {
 		return fmt.Errorf("seed: %w", err)
 	}
@@ -94,6 +98,8 @@ var ddl = []string{
 		shared_group_id   INTEGER REFERENCES shared_groups(id) ON DELETE RESTRICT,
 		paid_by_member_id INTEGER REFERENCES members(id) ON DELETE RESTRICT,
 		loan_id           INTEGER REFERENCES loans(id) ON DELETE SET NULL,
+		is_pending        INTEGER NOT NULL DEFAULT 0,
+		planned_id        INTEGER REFERENCES planned_transactions(id) ON DELETE SET NULL,
 		created_at        TEXT    NOT NULL,
 		updated_at        TEXT    NOT NULL
 	)`,
@@ -118,14 +124,13 @@ var ddl = []string{
 		updated_at        TEXT    NOT NULL
 	)`,
 
-	// ── Loans ───────────────────────────────────────
 	`CREATE TABLE IF NOT EXISTS loans (
 		id              INTEGER PRIMARY KEY AUTOINCREMENT,
 		name            TEXT    NOT NULL,
 		principal       REAL    NOT NULL CHECK(principal > 0),
 		annual_rate     REAL    NOT NULL CHECK(annual_rate >= 0),
-		term_months     INTEGER NOT NULL CHECK(term_months > 0),
 		start_date      TEXT    NOT NULL,
+		end_date        TEXT    NOT NULL,
 		monthly_payment REAL    NOT NULL,
 		already_paid    REAL    NOT NULL DEFAULT 0,
 		account_id      INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
@@ -133,30 +138,6 @@ var ddl = []string{
 		is_active       INTEGER NOT NULL DEFAULT 1,
 		created_at      TEXT    NOT NULL,
 		updated_at      TEXT    NOT NULL
-	)`,
-
-	// ── Budget planning ─────────────────────────────
-	`CREATE TABLE IF NOT EXISTS budget_columns (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		name       TEXT    NOT NULL,
-		col_type   TEXT    NOT NULL DEFAULT 'category',
-		ref_id     INTEGER,
-		sort_order INTEGER NOT NULL DEFAULT 0
-	)`,
-
-	`CREATE TABLE IF NOT EXISTS budget_rows (
-		id          INTEGER PRIMARY KEY AUTOINCREMENT,
-		date        TEXT    NOT NULL,
-		label       TEXT    NOT NULL DEFAULT '',
-		is_executed INTEGER NOT NULL DEFAULT 0
-	)`,
-
-	`CREATE TABLE IF NOT EXISTS budget_cells (
-		id        INTEGER PRIMARY KEY AUTOINCREMENT,
-		row_id    INTEGER NOT NULL REFERENCES budget_rows(id) ON DELETE CASCADE,
-		column_id INTEGER NOT NULL REFERENCES budget_columns(id) ON DELETE CASCADE,
-		amount    REAL    NOT NULL DEFAULT 0,
-		UNIQUE(row_id, column_id)
 	)`,
 
 	// ── Indexes ─────────────────────────────────────
@@ -167,6 +148,8 @@ var ddl = []string{
 	`CREATE INDEX IF NOT EXISTS idx_tx_group     ON transactions(shared_group_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_tx_paid_by   ON transactions(paid_by_member_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_tx_loan      ON transactions(loan_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_tx_pending   ON transactions(is_pending)`,
+	`CREATE INDEX IF NOT EXISTS idx_tx_planned   ON transactions(planned_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_cat_parent   ON categories(parent_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_acc_member   ON accounts(member_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_sgm_group    ON shared_group_members(group_id)`,
@@ -174,9 +157,6 @@ var ddl = []string{
 	`CREATE INDEX IF NOT EXISTS idx_pt_active    ON planned_transactions(is_active)`,
 	`CREATE INDEX IF NOT EXISTS idx_lookup_group ON lookup_values(group_name, sort_order)`,
 	`CREATE INDEX IF NOT EXISTS idx_loan_active  ON loans(is_active)`,
-	`CREATE INDEX IF NOT EXISTS idx_bcell_row    ON budget_cells(row_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_bcell_col    ON budget_cells(column_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_brow_date    ON budget_rows(date)`,
 }
 
 func seed(db *sql.DB) error {

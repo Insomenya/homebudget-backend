@@ -22,7 +22,6 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 	an := &AnalyticsHandler{repo: repos.Analytics}
 	mt := &MetaHandler{repo: repos.Lookup}
 	lh := &LoanHandler{repo: repos.Loan}
-	bh := &BudgetHandler{repo: repos.Budget}
 	dh := &DashboardHandler{
 		accounts: repos.Account, transactions: repos.Transaction,
 		groups: repos.SharedGroup, planned: repos.Planned,
@@ -98,16 +97,6 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 			lr.Put("/{id}", lh.Update)
 			lr.Delete("/{id}", lh.Delete)
 			lr.Get("/{id}/schedule", lh.DailySchedule)
-		})
-
-		api.Route("/budget", func(br chi.Router) {
-			br.Get("/", bh.GetTable)
-			br.Post("/columns", bh.CreateColumn)
-			br.Delete("/columns/{id}", bh.DeleteColumn)
-			br.Post("/rows", bh.CreateRow)
-			br.Delete("/rows/{id}", bh.DeleteRow)
-			br.Put("/cells", bh.UpdateCell)
-			br.Post("/rows/{id}/toggle", bh.ToggleExecuted)
 		})
 
 		api.Route("/analytics", func(ar chi.Router) {

@@ -10,5 +10,4 @@ type Repos struct {
 	Analytics   *AnalyticsRepo
 	Lookup      *LookupRepo
 	Loan        *LoanRepo
-	Budget      *BudgetRepo
 }

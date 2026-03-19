@@ -34,7 +34,6 @@ func main() {
 		Analytics:   repository.NewAnalyticsRepo(db),
 		Lookup:      repository.NewLookupRepo(db),
 		Loan:        repository.NewLoanRepo(db),
-		Budget:      repository.NewBudgetRepo(db),
 	}
 
 	router := handler.NewRouter(repos, cfg.CORSOrigin)
