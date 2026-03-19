@@ -10,13 +10,13 @@ import (
 type AccountHandler struct{ repo *repository.AccountRepo }
 
 func (h *AccountHandler) List(w http.ResponseWriter, r *http.Request) {
-	incl := r.URL.Query().Get("include_archived") == "true"
-	items, err := h.repo.List(r.Context(), incl)
+	// Всегда возвращаем с балансами
+	items, err := h.repo.ListWithBalances(r.Context())
 	if err != nil {
 		writeErr(w, 500, err.Error()); return
 	}
 	if items == nil {
-		items = []models.Account{}
+		items = []models.AccountBalance{}
 	}
 	writeJSON(w, 200, items)
 }
