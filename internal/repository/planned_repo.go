@@ -169,14 +169,15 @@ func (r *PlannedRepo) AdvanceNextDue(ctx context.Context, id int64) error {
 	return err
 }
 
-// MaterializeDue создаёт pending-транзакции для всех отложенных платежей,
-// у которых next_due <= сегодня + notify_days.
-func (r *PlannedRepo) MaterializeDue(ctx context.Context, txRepo *TransactionRepo) {
+// MaterializeDue создаёт pending-транзакции для отложенных платежей
+// у которых next_due <= сегодня + notify_days. Возвращает количество созданных.
+func (r *PlannedRepo) MaterializeDue(ctx context.Context, txRepo *TransactionRepo) int {
 	active, err := r.List(ctx, true)
 	if err != nil {
-		return
+		return 0
 	}
 
+	created := 0
 	for _, pt := range active {
 		if !pt.IsActive {
 			continue
@@ -211,7 +212,9 @@ func (r *PlannedRepo) MaterializeDue(ctx context.Context, txRepo *TransactionRep
 		if _, err := txRepo.Create(ctx, txIn); err != nil {
 			continue
 		}
+		created++
 
 		_ = r.AdvanceNextDue(ctx, pt.ID)
 	}
+	return created
 }

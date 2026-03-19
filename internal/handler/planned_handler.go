@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"time"
 
 	"homebudget/internal/models"
 	"homebudget/internal/repository"
@@ -88,7 +87,6 @@ func (h *PlannedHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-// Upcoming — GET /api/planned/upcoming?days=30
 func (h *PlannedHandler) Upcoming(w http.ResponseWriter, r *http.Request) {
 	days := qInt(r, "days", 30)
 	items, err := h.repo.Upcoming(r.Context(), days)
@@ -98,64 +96,7 @@ func (h *PlannedHandler) Upcoming(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, items)
 }
 
-// Materialize — POST /api/planned/materialize
-// Создаёт pending-транзакции для всех отложенных платежей,
-// у которых next_due <= сегодня + notify_days.
 func (h *PlannedHandler) Materialize(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	today := time.Now().Format("2006-01-02")
-
-	active, err := h.repo.List(ctx, true)
-	if err != nil {
-		writeErr(w, 500, err.Error()); return
-	}
-
-	var created int
-	for _, pt := range active {
-		if !pt.IsActive {
-			continue
-		}
-		// Проверяем, что next_due уже наступил или в пределах notify_days
-		cutoff := time.Now().AddDate(0, 0, pt.NotifyDays).Format("2006-01-02")
-		if pt.NextDue > cutoff {
-			continue
-		}
-
-		// Проверяем, нет ли уже pending транзакции для этого planned + даты
-		exists, err := h.txRepo.ExistsPendingForPlanned(ctx, pt.ID, pt.NextDue)
-		if err != nil {
-			writeErr(w, 500, err.Error()); return
-		}
-		if exists {
-			continue
-		}
-
-		txIn := models.CreateTransactionInput{
-			Date:           pt.NextDue,
-			Amount:         pt.Amount,
-			Description:    pt.Name,
-			Type:           pt.Type,
-			AccountID:      pt.AccountID,
-			CategoryID:     pt.CategoryID,
-			SharedGroupID:  pt.SharedGroupID,
-			PaidByMemberID: pt.PaidByMemberID,
-			IsPending:      true,
-			PlannedID:      &pt.ID,
-		}
-
-		if msg := txIn.Validate(); msg != "" {
-			continue
-		}
-
-		if _, err := h.txRepo.Create(ctx, txIn); err != nil {
-			continue
-		}
-		created++
-
-		// Продвигаем next_due
-		_ = h.repo.AdvanceNextDue(ctx, pt.ID)
-	}
-
-	_ = today
+	created := h.repo.MaterializeDue(r.Context(), h.txRepo)
 	writeJSON(w, 200, map[string]int{"created": created})
 }
