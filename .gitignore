@@ -1,3 +1,4 @@
 homebudget.db
 *.db
-*.wal
+*.db-wal
+*.db-shm
