@@ -85,10 +85,10 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 			pr.Get("/", ph.List)
 			pr.Post("/", ph.Create)
 			pr.Get("/upcoming", ph.Upcoming)
+			pr.Post("/materialize", ph.Materialize)
 			pr.Get("/{id}", ph.GetByID)
 			pr.Put("/{id}", ph.Update)
 			pr.Delete("/{id}", ph.Delete)
-			pr.Post("/{id}/execute", ph.Execute)
 		})
 
 		api.Route("/loans", func(lr chi.Router) {

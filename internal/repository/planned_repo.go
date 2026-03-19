@@ -129,7 +129,6 @@ func (r *PlannedRepo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// Upcoming — вычисляем дату в Go, передаём в SQLite как строку.
 func (r *PlannedRepo) Upcoming(ctx context.Context, days int) ([]models.PlannedTransaction, error) {
 	if days <= 0 {
 		days = 30
@@ -168,4 +167,51 @@ func (r *PlannedRepo) AdvanceNextDue(ctx context.Context, id int64) error {
 		"UPDATE planned_transactions SET next_due=?, is_active=?, updated_at=? WHERE id=?",
 		next, boolInt(active), now, id)
 	return err
+}
+
+// MaterializeDue создаёт pending-транзакции для всех отложенных платежей,
+// у которых next_due <= сегодня + notify_days.
+func (r *PlannedRepo) MaterializeDue(ctx context.Context, txRepo *TransactionRepo) {
+	active, err := r.List(ctx, true)
+	if err != nil {
+		return
+	}
+
+	for _, pt := range active {
+		if !pt.IsActive {
+			continue
+		}
+		cutoff := time.Now().AddDate(0, 0, pt.NotifyDays).Format("2006-01-02")
+		if pt.NextDue > cutoff {
+			continue
+		}
+
+		exists, err := txRepo.ExistsPendingForPlanned(ctx, pt.ID, pt.NextDue)
+		if err != nil || exists {
+			continue
+		}
+
+		txIn := models.CreateTransactionInput{
+			Date:           pt.NextDue,
+			Amount:         pt.Amount,
+			Description:    pt.Name,
+			Type:           pt.Type,
+			AccountID:      pt.AccountID,
+			CategoryID:     pt.CategoryID,
+			SharedGroupID:  pt.SharedGroupID,
+			PaidByMemberID: pt.PaidByMemberID,
+			IsPending:      true,
+			PlannedID:      &pt.ID,
+		}
+
+		if msg := txIn.Validate(); msg != "" {
+			continue
+		}
+
+		if _, err := txRepo.Create(ctx, txIn); err != nil {
+			continue
+		}
+
+		_ = r.AdvanceNextDue(ctx, pt.ID)
+	}
 }

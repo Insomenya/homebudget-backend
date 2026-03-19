@@ -119,6 +119,17 @@ func (r *TransactionRepo) ConfirmPending(ctx context.Context, id int64) (*models
 	return r.GetByID(ctx, id)
 }
 
+func (r *TransactionRepo) ExistsPendingForPlanned(ctx context.Context, plannedID int64, date string) (bool, error) {
+	var cnt int
+	err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM transactions WHERE planned_id=? AND date=? AND is_pending=1",
+		plannedID, date).Scan(&cnt)
+	if err != nil {
+		return false, err
+	}
+	return cnt > 0, nil
+}
+
 func (r *TransactionRepo) List(ctx context.Context, f models.TransactionFilter) (*models.TransactionList, error) {
 	where, args := buildTxWhere(f)
 

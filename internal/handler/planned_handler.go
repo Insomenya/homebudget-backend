@@ -98,59 +98,64 @@ func (h *PlannedHandler) Upcoming(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, items)
 }
 
-// Execute — POST /api/planned/{id}/execute
-// Создаёт реальную транзакцию и продвигает next_due.
-func (h *PlannedHandler) Execute(w http.ResponseWriter, r *http.Request) {
-	id, err := urlID(r)
-	if err != nil {
-		writeErr(w, 400, "invalid id"); return
-	}
+// Materialize — POST /api/planned/materialize
+// Создаёт pending-транзакции для всех отложенных платежей,
+// у которых next_due <= сегодня + notify_days.
+func (h *PlannedHandler) Materialize(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	today := time.Now().Format("2006-01-02")
 
-	pt, err := h.repo.GetByID(r.Context(), id)
+	active, err := h.repo.List(ctx, true)
 	if err != nil {
 		writeErr(w, 500, err.Error()); return
 	}
-	if pt == nil {
-		writeErr(w, 404, "not found"); return
-	}
-	if !pt.IsActive {
-		writeErr(w, 422, "planned transaction is inactive"); return
-	}
 
-	// Опциональный override даты
-	var body models.ExecutePlannedInput
-	_ = readJSON(r, &body) // ошибка парсинга — не критична, используем next_due
-
-	date := pt.NextDue
-	if body.Date != "" {
-		if _, err := time.Parse("2006-01-02", body.Date); err == nil {
-			date = body.Date
+	var created int
+	for _, pt := range active {
+		if !pt.IsActive {
+			continue
 		}
+		// Проверяем, что next_due уже наступил или в пределах notify_days
+		cutoff := time.Now().AddDate(0, 0, pt.NotifyDays).Format("2006-01-02")
+		if pt.NextDue > cutoff {
+			continue
+		}
+
+		// Проверяем, нет ли уже pending транзакции для этого planned + даты
+		exists, err := h.txRepo.ExistsPendingForPlanned(ctx, pt.ID, pt.NextDue)
+		if err != nil {
+			writeErr(w, 500, err.Error()); return
+		}
+		if exists {
+			continue
+		}
+
+		txIn := models.CreateTransactionInput{
+			Date:           pt.NextDue,
+			Amount:         pt.Amount,
+			Description:    pt.Name,
+			Type:           pt.Type,
+			AccountID:      pt.AccountID,
+			CategoryID:     pt.CategoryID,
+			SharedGroupID:  pt.SharedGroupID,
+			PaidByMemberID: pt.PaidByMemberID,
+			IsPending:      true,
+			PlannedID:      &pt.ID,
+		}
+
+		if msg := txIn.Validate(); msg != "" {
+			continue
+		}
+
+		if _, err := h.txRepo.Create(ctx, txIn); err != nil {
+			continue
+		}
+		created++
+
+		// Продвигаем next_due
+		_ = h.repo.AdvanceNextDue(ctx, pt.ID)
 	}
 
-	txIn := models.CreateTransactionInput{
-		Date:            date,
-		Amount:          pt.Amount,
-		Description:     pt.Name,
-		Type:            pt.Type,
-		AccountID:       pt.AccountID,
-		CategoryID:      pt.CategoryID,
-		SharedGroupID:   pt.SharedGroupID,
-		PaidByMemberID:  pt.PaidByMemberID,
-	}
-
-	if msg := txIn.Validate(); msg != "" {
-		writeErr(w, 422, "cannot create transaction: "+msg); return
-	}
-
-	tx, err := h.txRepo.Create(r.Context(), txIn)
-	if err != nil {
-		writeErr(w, 500, err.Error()); return
-	}
-
-	if err := h.repo.AdvanceNextDue(r.Context(), id); err != nil {
-		writeErr(w, 500, "transaction created but failed to advance: "+err.Error()); return
-	}
-
-	writeJSON(w, 201, tx)
+	_ = today
+	writeJSON(w, 200, map[string]int{"created": created})
 }
