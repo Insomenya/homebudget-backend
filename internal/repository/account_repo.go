@@ -111,7 +111,7 @@ func (r *AccountRepo) ListWithBalances(ctx context.Context) ([]models.AccountBal
 	// доходы
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT account_id, SUM(amount) FROM transactions
-		 WHERE account_id IS NOT NULL AND type='income'
+		 WHERE account_id IS NOT NULL AND type='income' AND is_pending=0
 		 GROUP BY account_id`)
 	if err != nil {
 		return nil, err
@@ -133,7 +133,7 @@ func (r *AccountRepo) ListWithBalances(ctx context.Context) ([]models.AccountBal
 	// расходы
 	rows, err = r.db.QueryContext(ctx,
 		`SELECT account_id, SUM(amount) FROM transactions
-		 WHERE account_id IS NOT NULL AND type='expense'
+		 WHERE account_id IS NOT NULL AND type='expense' AND is_pending=0
 		 GROUP BY account_id`)
 	if err != nil {
 		return nil, err
@@ -155,7 +155,7 @@ func (r *AccountRepo) ListWithBalances(ctx context.Context) ([]models.AccountBal
 	// переводы — исходящие
 	rows, err = r.db.QueryContext(ctx,
 		`SELECT account_id, SUM(amount) FROM transactions
-		 WHERE account_id IS NOT NULL AND type='transfer'
+		 WHERE account_id IS NOT NULL AND type='transfer' AND is_pending=0
 		 GROUP BY account_id`)
 	if err != nil {
 		return nil, err
@@ -177,7 +177,7 @@ func (r *AccountRepo) ListWithBalances(ctx context.Context) ([]models.AccountBal
 	// переводы — входящие
 	rows, err = r.db.QueryContext(ctx,
 		`SELECT to_account_id, SUM(amount) FROM transactions
-		 WHERE to_account_id IS NOT NULL AND type='transfer'
+		 WHERE to_account_id IS NOT NULL AND type='transfer' AND is_pending=0
 		 GROUP BY to_account_id`)
 	if err != nil {
 		return nil, err

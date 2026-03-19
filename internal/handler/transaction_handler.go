@@ -20,6 +20,7 @@ func (h *TransactionHandler) List(w http.ResponseWriter, r *http.Request) {
 		SharedGroupID:  qInt64Ptr(r, "shared_group_id"),
 		PaidByMemberID: qInt64Ptr(r, "paid_by_member_id"),
 		IsShared:       qBoolPtr(r, "is_shared"),
+		IsPending:      qBoolPtr(r, "is_pending"),
 		Page:           qInt(r, "page", 1),
 		Limit:          qInt(r, "limit", 20),
 		SortBy:         qStr(r, "sort", "date"),
@@ -100,4 +101,19 @@ func (h *TransactionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error()); return
 	}
 	w.WriteHeader(204)
+}
+
+func (h *TransactionHandler) Confirm(w http.ResponseWriter, r *http.Request) {
+	id, err := urlID(r)
+	if err != nil {
+		writeErr(w, 400, "invalid id"); return
+	}
+	t, err := h.repo.ConfirmPending(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error()); return
+	}
+	if t == nil {
+		writeErr(w, 404, "not found"); return
+	}
+	writeJSON(w, 200, t)
 }

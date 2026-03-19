@@ -18,6 +18,8 @@ type Transaction struct {
 	SharedGroupID   *int64  `json:"shared_group_id"`
 	PaidByMemberID  *int64  `json:"paid_by_member_id"`
 	LoanID          *int64  `json:"loan_id"`
+	IsPending       bool    `json:"is_pending"`
+	PlannedID       *int64  `json:"planned_id"`
 	CreatedAt       string  `json:"created_at"`
 	UpdatedAt       string  `json:"updated_at"`
 }
@@ -33,6 +35,8 @@ type CreateTransactionInput struct {
 	SharedGroupID   *int64  `json:"shared_group_id"`
 	PaidByMemberID  *int64  `json:"paid_by_member_id"`
 	LoanID          *int64  `json:"loan_id"`
+	IsPending       bool    `json:"is_pending"`
+	PlannedID       *int64  `json:"planned_id"`
 }
 
 type UpdateTransactionInput = CreateTransactionInput
@@ -92,6 +96,7 @@ type TransactionFilter struct {
 	PaidByMemberID *int64
 	LoanID         *int64
 	IsShared       *bool
+	IsPending      *bool
 	Page           int
 	Limit          int
 	SortBy         string

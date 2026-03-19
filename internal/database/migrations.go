@@ -13,7 +13,10 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("ddl #%d: %w", i, err)
 		}
 	}
+	addCol(db, "transactions", "is_pending", "INTEGER NOT NULL DEFAULT 0")
+	addCol(db, "transactions", "planned_id", "INTEGER REFERENCES planned_transactions(id) ON DELETE SET NULL")
 	// Drop budget tables if they exist (cleanup from old schema)
+	addCol(db, "loans", "end_date", "TEXT NOT NULL DEFAULT ''")
 	for _, t := range []string{"budget_cells", "budget_rows", "budget_columns"} {
 		db.Exec("DROP TABLE IF EXISTS " + t)
 	}
@@ -223,4 +226,9 @@ func seed(db *sql.DB) error {
 
 	log.Println("🌱 Seeded")
 	return nil
+}
+
+func addCol(db *sql.DB, table, col, def string) {
+	q := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, col, def)
+	db.Exec(q) // ignore error = column already exists
 }

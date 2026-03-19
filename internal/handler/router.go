@@ -78,6 +78,7 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 			tr.Get("/{id}", th.GetByID)
 			tr.Put("/{id}", th.Update)
 			tr.Delete("/{id}", th.Delete)
+			tr.Post("/{id}/confirm", th.Confirm)
 		})
 
 		api.Route("/planned", func(pr chi.Router) {
