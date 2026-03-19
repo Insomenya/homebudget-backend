@@ -164,16 +164,12 @@ func (r *SharedGroupRepo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// ── Общий хелпер: суммы по плательщикам ────────────
-
 func (r *SharedGroupRepo) paidByGroup(
-	ctx context.Context,
-	groupID int64,
-	dateFrom, dateTo string,
+	ctx context.Context, groupID int64, dateFrom, dateTo string,
 ) (map[int64]float64, float64, error) {
 	q := `SELECT paid_by_member_id, SUM(amount)
 	      FROM transactions
-	      WHERE shared_group_id = ? AND paid_by_member_id IS NOT NULL`
+	      WHERE shared_group_id = ? AND paid_by_member_id IS NOT NULL AND is_pending = 0`
 	args := []interface{}{groupID}
 
 	if dateFrom != "" {
@@ -207,9 +203,7 @@ func (r *SharedGroupRepo) paidByGroup(
 }
 
 func (r *SharedGroupRepo) buildBalances(
-	group *models.SharedGroupWithMembers,
-	paidMap map[int64]float64,
-	total float64,
+	group *models.SharedGroupWithMembers, paidMap map[int64]float64, total float64,
 ) []models.MemberBalance {
 	balances := make([]models.MemberBalance, 0, len(group.Members))
 	for _, m := range group.Members {
@@ -232,12 +226,8 @@ func (r *SharedGroupRepo) buildBalances(
 	return balances
 }
 
-// ── Settlement ──────────────────────────────────────
-
 func (r *SharedGroupRepo) GetSettlement(
-	ctx context.Context,
-	groupID int64,
-	dateFrom, dateTo string,
+	ctx context.Context, groupID int64, dateFrom, dateTo string,
 ) (*models.Settlement, error) {
 	group, err := r.GetByID(ctx, groupID)
 	if err != nil || group == nil {
@@ -260,19 +250,14 @@ func (r *SharedGroupRepo) GetSettlement(
 	}, nil
 }
 
-// ── Turnover ────────────────────────────────────────
-
 func (r *SharedGroupRepo) GetTurnover(
-	ctx context.Context,
-	groupID int64,
-	dateFrom, dateTo string,
+	ctx context.Context, groupID int64, dateFrom, dateTo string,
 ) (*models.Turnover, error) {
 	group, err := r.GetByID(ctx, groupID)
 	if err != nil || group == nil {
 		return nil, err
 	}
 
-	// Сальдо на начало
 	var openBal []models.MemberBalance
 	if dateFrom != "" {
 		pm, tot, err := r.paidByGroup(ctx, groupID, "", dateFrom)
@@ -284,14 +269,11 @@ func (r *SharedGroupRepo) GetTurnover(
 		openBal = zeroBalances(group)
 	}
 
-	// Обороты за период
 	pm, tot, err := r.paidByGroup(ctx, groupID, dateFrom, dateTo)
 	if err != nil {
 		return nil, err
 	}
 	periodBal := r.buildBalances(group, pm, tot)
-
-	// Сальдо на конец
 	closeBal := sumBalances(group, openBal, periodBal)
 
 	txs, err := r.periodTransactions(ctx, groupID, dateFrom, dateTo)
@@ -311,11 +293,9 @@ func (r *SharedGroupRepo) GetTurnover(
 }
 
 func (r *SharedGroupRepo) periodTransactions(
-	ctx context.Context,
-	gid int64,
-	from, to string,
+	ctx context.Context, gid int64, from, to string,
 ) ([]models.Transaction, error) {
-	q := txBase + " WHERE t.shared_group_id = ?"
+	q := txBase + " WHERE t.shared_group_id = ? AND t.is_pending = 0"
 	args := []interface{}{gid}
 	if from != "" {
 		q += " AND t.date >= ?"
@@ -344,8 +324,6 @@ func (r *SharedGroupRepo) periodTransactions(
 	return out, rows.Err()
 }
 
-// ── Dashboard summary (быстрый, без GROUP BY) ───────
-
 func (r *SharedGroupRepo) ListSettlementSummariesFast(
 	ctx context.Context,
 ) ([]models.GroupSettlementSummary, error) {
@@ -357,11 +335,10 @@ func (r *SharedGroupRepo) ListSettlementSummariesFast(
 		return []models.GroupSettlementSummary{}, nil
 	}
 
-	// Простой скан без GROUP BY
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT shared_group_id, paid_by_member_id, amount
 		 FROM transactions
-		 WHERE shared_group_id IS NOT NULL`)
+		 WHERE shared_group_id IS NOT NULL AND is_pending = 0`)
 	if err != nil {
 		return nil, err
 	}
@@ -415,16 +392,15 @@ func (r *SharedGroupRepo) ListSettlementSummariesFast(
 			debts = []models.Debt{}
 		}
 		out = append(out, models.GroupSettlementSummary{
-			GroupID:   g.ID,
-			GroupName: g.Name,
-			GroupIcon: g.Icon,
-			Debts:     debts,
+			GroupID:      g.ID,
+			GroupName:    g.Name,
+			GroupIcon:    g.Icon,
+			MemberCount: len(g.Members),
+			Debts:        debts,
 		})
 	}
 	return out, nil
 }
-
-// ── helpers ─────────────────────────────────────────
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
 

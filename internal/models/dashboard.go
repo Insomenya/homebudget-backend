@@ -19,10 +19,11 @@ type PeriodSummary struct {
 }
 
 type GroupSettlementSummary struct {
-	GroupID   int64  `json:"group_id"`
-	GroupName string `json:"group_name"`
-	GroupIcon string `json:"group_icon"`
-	Debts     []Debt `json:"debts"`
+	GroupID     int64  `json:"group_id"`
+	GroupName   string `json:"group_name"`
+	GroupIcon   string `json:"group_icon"`
+	MemberCount int   `json:"member_count"`
+	Debts       []Debt `json:"debts"`
 }
 
 type Dashboard struct {

@@ -88,9 +88,8 @@ func (r *AccountRepo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// ListWithBalances — два отдельных запроса вместо коррелированных подзапросов.
+// ListWithBalances — балансы с учётом только подтверждённых транзакций.
 func (r *AccountRepo) ListWithBalances(ctx context.Context) ([]models.AccountBalance, error) {
-	// 1. Загрузить все счета
 	accounts, err := r.List(ctx, false)
 	if err != nil {
 		return nil, err
@@ -99,104 +98,63 @@ func (r *AccountRepo) ListWithBalances(ctx context.Context) ([]models.AccountBal
 		return []models.AccountBalance{}, nil
 	}
 
-	// 2. Посчитать все движения по счетам одним запросом
 	type movement struct {
-		income   float64
-		expense  float64
-		xferIn   float64
-		xferOut  float64
+		income  float64
+		expense float64
+		xferIn  float64
+		xferOut float64
 	}
 	moves := make(map[int64]*movement)
 
-	// доходы
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT account_id, SUM(amount) FROM transactions
-		 WHERE account_id IS NOT NULL AND type='income' AND is_pending=0
-		 GROUP BY account_id`)
+	// Один запрос вместо четырёх
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			account_id,
+			to_account_id,
+			type,
+			amount
+		FROM transactions
+		WHERE is_pending = 0
+		  AND (account_id IS NOT NULL OR to_account_id IS NOT NULL)
+	`)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
+
 	for rows.Next() {
-		var id int64
-		var sum float64
-		if err := rows.Scan(&id, &sum); err != nil {
-			rows.Close()
+		var accID, toAccID sql.NullInt64
+		var txType string
+		var amount float64
+		if err := rows.Scan(&accID, &toAccID, &txType, &amount); err != nil {
 			return nil, err
 		}
-		if moves[id] == nil {
-			moves[id] = &movement{}
-		}
-		moves[id].income = sum
-	}
-	rows.Close()
 
-	// расходы
-	rows, err = r.db.QueryContext(ctx,
-		`SELECT account_id, SUM(amount) FROM transactions
-		 WHERE account_id IS NOT NULL AND type='expense' AND is_pending=0
-		 GROUP BY account_id`)
-	if err != nil {
+		if accID.Valid {
+			if moves[accID.Int64] == nil {
+				moves[accID.Int64] = &movement{}
+			}
+			switch txType {
+			case "income":
+				moves[accID.Int64].income += amount
+			case "expense":
+				moves[accID.Int64].expense += amount
+			case "transfer":
+				moves[accID.Int64].xferOut += amount
+			}
+		}
+
+		if toAccID.Valid && txType == "transfer" {
+			if moves[toAccID.Int64] == nil {
+				moves[toAccID.Int64] = &movement{}
+			}
+			moves[toAccID.Int64].xferIn += amount
+		}
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for rows.Next() {
-		var id int64
-		var sum float64
-		if err := rows.Scan(&id, &sum); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if moves[id] == nil {
-			moves[id] = &movement{}
-		}
-		moves[id].expense = sum
-	}
-	rows.Close()
 
-	// переводы — исходящие
-	rows, err = r.db.QueryContext(ctx,
-		`SELECT account_id, SUM(amount) FROM transactions
-		 WHERE account_id IS NOT NULL AND type='transfer' AND is_pending=0
-		 GROUP BY account_id`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var id int64
-		var sum float64
-		if err := rows.Scan(&id, &sum); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if moves[id] == nil {
-			moves[id] = &movement{}
-		}
-		moves[id].xferOut = sum
-	}
-	rows.Close()
-
-	// переводы — входящие
-	rows, err = r.db.QueryContext(ctx,
-		`SELECT to_account_id, SUM(amount) FROM transactions
-		 WHERE to_account_id IS NOT NULL AND type='transfer' AND is_pending=0
-		 GROUP BY to_account_id`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var id int64
-		var sum float64
-		if err := rows.Scan(&id, &sum); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if moves[id] == nil {
-			moves[id] = &movement{}
-		}
-		moves[id].xferIn = sum
-	}
-	rows.Close()
-
-	// 3. Собрать результат
 	out := make([]models.AccountBalance, 0, len(accounts))
 	for _, a := range accounts {
 		m := moves[a.ID]
