@@ -19,10 +19,14 @@ func main() {
 	cfg := config.Load()
 
 	db, err := database.Open(cfg.DBPath)
-	if err != nil { log.Fatalf("database: %v", err) }
+	if err != nil {
+		log.Fatalf("database: %v", err)
+	}
 	defer db.Close()
 
-	if err := database.Migrate(db); err != nil { log.Fatalf("migrate: %v", err) }
+	if err := database.Migrate(db); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
 
 	repos := &repository.Repos{
 		Member:      repository.NewMemberRepo(db),
@@ -39,13 +43,18 @@ func main() {
 	router := handler.NewRouter(repos, cfg.CORSOrigin)
 
 	srv := &http.Server{
-		Addr: ":" + cfg.Port, Handler: router,
-		ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second,
+		Addr:         ":" + cfg.Port,
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	go func() {
 		log.Printf("🚀 http://localhost:%s", cfg.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed { log.Fatalf("server: %v", err) }
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server: %v", err)
+		}
 	}()
 
 	quit := make(chan os.Signal, 1)
