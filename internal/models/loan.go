@@ -8,22 +8,24 @@ import (
 // ── DB Entity ───────────────────────────────────────
 
 type Loan struct {
-	ID             int64   `json:"id"`
-	Name           string  `json:"name"`
-	Principal      float64 `json:"principal"`
-	AnnualRate     float64 `json:"annual_rate"`
-	StartDate      string  `json:"start_date"`
-	EndDate        string  `json:"end_date"`
-	MonthlyPayment float64 `json:"monthly_payment"`
-	AlreadyPaid    float64 `json:"already_paid"`
-	AccountID      *int64  `json:"account_id"`
-	CategoryID     *int64  `json:"category_id"`
-	IsActive       bool    `json:"is_active"`
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      string  `json:"updated_at"`
+	ID               int64   `json:"id"`
+	Name             string  `json:"name"`
+	Principal        float64 `json:"principal"`
+	AnnualRate       float64 `json:"annual_rate"`
+	StartDate        string  `json:"start_date"`
+	EndDate          string  `json:"end_date"`
+	MonthlyPayment   float64 `json:"monthly_payment"`
+	AlreadyPaid      float64 `json:"already_paid"`
+	AccountID        *int64  `json:"account_id"`
+	DefaultAccountID *int64  `json:"default_account_id"`
+	LoanAccountID    *int64  `json:"loan_account_id"`
+	CategoryID       *int64  `json:"category_id"`
+	PlannedID        *int64  `json:"planned_id"`
+	IsActive         bool    `json:"is_active"`
+	CreatedAt        string  `json:"created_at"`
+	UpdatedAt        string  `json:"updated_at"`
 }
 
-// TermMonths вычисляет срок в месяцах из дат.
 func (l *Loan) TermMonths() int {
 	start, err1 := time.Parse("2006-01-02", l.StartDate)
 	end, err2 := time.Parse("2006-01-02", l.EndDate)
@@ -40,22 +42,23 @@ func (l *Loan) TermMonths() int {
 }
 
 type CreateLoanInput struct {
-	Name        string  `json:"name"`
-	Principal   float64 `json:"principal"`
-	AnnualRate  float64 `json:"annual_rate"`
-	StartDate   string  `json:"start_date"`
-	EndDate     string  `json:"end_date"`
-	AlreadyPaid float64 `json:"already_paid"`
-	AccountID   *int64  `json:"account_id"`
-	CategoryID  *int64  `json:"category_id"`
+	Name             string  `json:"name"`
+	Principal        float64 `json:"principal"`
+	AnnualRate       float64 `json:"annual_rate"`
+	StartDate        string  `json:"start_date"`
+	EndDate          string  `json:"end_date"`
+	AlreadyPaid      float64 `json:"already_paid"`
+	AccountID        *int64  `json:"account_id"`
+	DefaultAccountID *int64  `json:"default_account_id"`
+	CategoryID       *int64  `json:"category_id"`
 }
 
 type UpdateLoanInput struct {
-	Name       string  `json:"name"`
-	AnnualRate float64 `json:"annual_rate"`
-	AccountID  *int64  `json:"account_id"`
-	CategoryID *int64  `json:"category_id"`
-	IsActive   bool    `json:"is_active"`
+	Name             string  `json:"name"`
+	AnnualRate       float64 `json:"annual_rate"`
+	DefaultAccountID *int64  `json:"default_account_id"`
+	CategoryID       *int64  `json:"category_id"`
+	IsActive         bool    `json:"is_active"`
 }
 
 func (in *CreateLoanInput) Validate() string {
@@ -104,9 +107,6 @@ func CalcTermMonths(startDate, endDate string) int {
 	return months
 }
 
-// CalcMonthlyPayment — аннуитетный платёж.
-// remainingPrincipal — оставшееся тело (principal - alreadyPaid).
-// remainingMonths — оставшиеся месяцы от текущего момента до конца.
 func CalcMonthlyPayment(remainingPrincipal, annualRate float64, remainingMonths int) float64 {
 	if remainingMonths <= 0 {
 		return 0
@@ -120,7 +120,6 @@ func CalcMonthlyPayment(remainingPrincipal, annualRate float64, remainingMonths 
 	return math.Ceil(remainingPrincipal*mr*rn/(rn-1)*100) / 100
 }
 
-// CalcMonthlyPaymentForLoan — удобная обёртка для полного кредита.
 func CalcMonthlyPaymentForLoan(principal, alreadyPaid, annualRate float64, startDate, endDate string) float64 {
 	remaining := principal - alreadyPaid
 	if remaining <= 0 {
@@ -156,7 +155,6 @@ type LoanDailySchedule struct {
 	Months        []LoanMonthGroup `json:"months"`
 }
 
-// daysInYear возвращает кол-во дней в году для конкретной даты.
 func daysInYear(t time.Time) int {
 	start := time.Date(t.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(t.Year()+1, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -173,7 +171,6 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 	from, _ := time.Parse("2006-01-02", fromDate)
 	to, _ := time.Parse("2006-01-02", toDate)
 
-	// build payment map: date -> total amount
 	payMap := make(map[string]float64)
 	for _, p := range payments {
 		payMap[p.Date] += p.Amount
@@ -186,7 +183,6 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 	var accumInterest float64
 	var totalPaid, totalInterest float64
 
-	// fast-forward from start to fromDate
 	for d := start; d.Before(from); d = d.AddDate(0, 0, 1) {
 		if debt <= 0.005 {
 			break
@@ -198,7 +194,6 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 
 		ds := d.Format("2006-01-02")
 		if pmt, ok := payMap[ds]; ok {
-			// платёж покрывает сначала накопленные проценты, остаток — в тело
 			if accumInterest >= pmt {
 				accumInterest -= pmt
 			} else {
@@ -213,13 +208,11 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 		}
 	}
 
-	// build visible rows grouped by month
 	monthsMap := make(map[string]*LoanMonthGroup)
 	var monthOrder []string
 
 	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
 		if debt <= 0.005 && accumInterest <= 0.005 {
-			// кредит погашен, но покажем пустые дни? Нет, прерываем.
 			break
 		}
 
@@ -233,7 +226,6 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 		isPayDay := pmt > 0
 
 		if isPayDay {
-			// досрочный/обычный платёж: сначала проценты, потом тело
 			if accumInterest >= pmt {
 				accumInterest -= pmt
 			} else {

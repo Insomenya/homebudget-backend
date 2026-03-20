@@ -8,6 +8,7 @@ type Account struct {
 	InitialBalance float64 `json:"initial_balance"`
 	MemberID       int64   `json:"member_id"`
 	IsArchived     bool    `json:"is_archived"`
+	IsHidden       bool    `json:"is_hidden"`
 	CreatedAt      string  `json:"created_at"`
 	UpdatedAt      string  `json:"updated_at"`
 }
@@ -18,6 +19,7 @@ type CreateAccountInput struct {
 	Currency       string  `json:"currency"`
 	InitialBalance float64 `json:"initial_balance"`
 	MemberID       int64   `json:"member_id"`
+	IsHidden       bool    `json:"is_hidden"`
 }
 
 type UpdateAccountInput struct {

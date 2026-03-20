@@ -25,8 +25,8 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	t0 := time.Now()
 
-	// Auto-materialize pending planned transactions
-	h.planned.MaterializeDue(ctx, h.transactions)
+	// Auto-materialize reminders
+	h.planned.MaterializeReminders(ctx)
 
 	accounts, err := h.accounts.ListWithBalances(ctx)
 	if err != nil {
@@ -62,17 +62,12 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		upcoming = []models.PlannedTransaction{}
 	}
 
-	pendingFilter := models.TransactionFilter{
-		IsPending: boolPtr(true),
-		Page: 1, Limit: 20, SortBy: "date", SortDir: "ASC",
-	}
-	pendingList, err := h.transactions.List(ctx, pendingFilter)
+	reminders, err := h.planned.ListActiveReminders(ctx)
 	if err != nil {
-		writeErr(w, 500, "pending: "+err.Error()); return
+		writeErr(w, 500, "reminders: "+err.Error()); return
 	}
-	pending := pendingList.Items
-	if pending == nil {
-		pending = []models.Transaction{}
+	if reminders == nil {
+		reminders = []models.PlannedReminder{}
 	}
 
 	log.Printf("  dashboard: TOTAL %v", time.Since(t0))
@@ -83,8 +78,6 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Settlements:  settlements,
 		Recent:       recent,
 		Upcoming:     upcoming,
-		Pending:      pending,
+		Reminders:    reminders,
 	})
 }
-
-func boolPtr(b bool) *bool { return &b }

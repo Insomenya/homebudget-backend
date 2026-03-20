@@ -11,23 +11,44 @@ type AccountRepo struct{ db *sql.DB }
 
 func NewAccountRepo(db *sql.DB) *AccountRepo { return &AccountRepo{db: db} }
 
-const accountCols = `id, name, type, currency, initial_balance, member_id, is_archived, created_at, updated_at`
+const accountCols = `id, name, type, currency, initial_balance, member_id, is_archived, is_hidden, created_at, updated_at`
 
 func scanAccount(s scannable) (models.Account, error) {
 	var a models.Account
-	var arch int
+	var arch, hidden int
 	err := s.Scan(&a.ID, &a.Name, &a.Type, &a.Currency,
-		&a.InitialBalance, &a.MemberID, &arch, &a.CreatedAt, &a.UpdatedAt)
+		&a.InitialBalance, &a.MemberID, &arch, &hidden, &a.CreatedAt, &a.UpdatedAt)
 	a.IsArchived = arch == 1
+	a.IsHidden = hidden == 1
 	return a, err
 }
 
 func (r *AccountRepo) List(ctx context.Context, inclArch bool) ([]models.Account, error) {
-	q := "SELECT " + accountCols + " FROM accounts"
+	q := "SELECT " + accountCols + " FROM accounts WHERE is_hidden=0"
 	if !inclArch {
-		q += " WHERE is_archived=0"
+		q += " AND is_archived=0"
 	}
 	q += " ORDER BY id"
+	rows, err := r.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []models.Account
+	for rows.Next() {
+		a, err := scanAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ListAll includes hidden accounts (for transaction selectors that need loan accounts).
+func (r *AccountRepo) ListAll(ctx context.Context) ([]models.Account, error) {
+	q := "SELECT " + accountCols + " FROM accounts WHERE is_archived=0 ORDER BY is_hidden ASC, id ASC"
 	rows, err := r.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
@@ -60,9 +81,10 @@ func (r *AccountRepo) GetByID(ctx context.Context, id int64) (*models.Account, e
 func (r *AccountRepo) Create(ctx context.Context, in models.CreateAccountInput) (*models.Account, error) {
 	now := ts()
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO accounts (name,type,currency,initial_balance,member_id,is_archived,created_at,updated_at)
-		 VALUES (?,?,?,?,?,0,?,?)`,
-		in.Name, in.Type, in.Currency, in.InitialBalance, in.MemberID, now, now)
+		`INSERT INTO accounts (name,type,currency,initial_balance,member_id,is_archived,is_hidden,created_at,updated_at)
+		 VALUES (?,?,?,?,?,0,?,?,?)`,
+		in.Name, in.Type, in.Currency, in.InitialBalance, in.MemberID,
+		boolInt(in.IsHidden), now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +110,7 @@ func (r *AccountRepo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// ListWithBalances — балансы с учётом только подтверждённых транзакций.
+// ListWithBalances — балансы с учётом всех транзакций. Не включает скрытые счета.
 func (r *AccountRepo) ListWithBalances(ctx context.Context) ([]models.AccountBalance, error) {
 	accounts, err := r.List(ctx, false)
 	if err != nil {
@@ -106,7 +128,6 @@ func (r *AccountRepo) ListWithBalances(ctx context.Context) ([]models.AccountBal
 	}
 	moves := make(map[int64]*movement)
 
-	// Один запрос вместо четырёх
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT
 			account_id,
@@ -114,8 +135,7 @@ func (r *AccountRepo) ListWithBalances(ctx context.Context) ([]models.AccountBal
 			type,
 			amount
 		FROM transactions
-		WHERE is_pending = 0
-		  AND (account_id IS NOT NULL OR to_account_id IS NOT NULL)
+		WHERE (account_id IS NOT NULL OR to_account_id IS NOT NULL)
 	`)
 	if err != nil {
 		return nil, err

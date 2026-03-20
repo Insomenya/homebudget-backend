@@ -12,20 +12,31 @@ type LoanRepo struct{ db *sql.DB }
 func NewLoanRepo(db *sql.DB) *LoanRepo { return &LoanRepo{db: db} }
 
 const loanCols = `id, name, principal, annual_rate, start_date, end_date,
-	monthly_payment, already_paid, account_id, category_id, is_active, created_at, updated_at`
+	monthly_payment, already_paid, account_id, default_account_id, loan_account_id,
+	category_id, planned_id, is_active, created_at, updated_at`
 
 func scanLoan(s scannable) (models.Loan, error) {
 	var l models.Loan
-	var accID, catID sql.NullInt64
+	var accID, defAccID, loanAccID, catID, plannedID sql.NullInt64
 	var active int
 	err := s.Scan(&l.ID, &l.Name, &l.Principal, &l.AnnualRate,
 		&l.StartDate, &l.EndDate, &l.MonthlyPayment, &l.AlreadyPaid,
-		&accID, &catID, &active, &l.CreatedAt, &l.UpdatedAt)
+		&accID, &defAccID, &loanAccID, &catID, &plannedID, &active,
+		&l.CreatedAt, &l.UpdatedAt)
 	if accID.Valid {
 		l.AccountID = &accID.Int64
 	}
+	if defAccID.Valid {
+		l.DefaultAccountID = &defAccID.Int64
+	}
+	if loanAccID.Valid {
+		l.LoanAccountID = &loanAccID.Int64
+	}
 	if catID.Valid {
 		l.CategoryID = &catID.Int64
+	}
+	if plannedID.Valid {
+		l.PlannedID = &plannedID.Int64
 	}
 	l.IsActive = active == 1
 	return l, err
@@ -70,10 +81,12 @@ func (r *LoanRepo) Create(ctx context.Context, in models.CreateLoanInput) (*mode
 	now := ts()
 	pmt := models.CalcMonthlyPaymentForLoan(in.Principal, in.AlreadyPaid, in.AnnualRate, in.StartDate, in.EndDate)
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO loans (name,principal,annual_rate,start_date,end_date,monthly_payment,already_paid,account_id,category_id,is_active,created_at,updated_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,1,?,?)`,
+		`INSERT INTO loans (name,principal,annual_rate,start_date,end_date,monthly_payment,already_paid,
+		 account_id,default_account_id,loan_account_id,category_id,planned_id,is_active,created_at,updated_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`,
 		in.Name, in.Principal, in.AnnualRate, in.StartDate, in.EndDate, pmt,
-		in.AlreadyPaid, in.AccountID, in.CategoryID, now, now)
+		in.AlreadyPaid, in.AccountID, in.DefaultAccountID, nil,
+		in.CategoryID, nil, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -84,12 +97,24 @@ func (r *LoanRepo) Create(ctx context.Context, in models.CreateLoanInput) (*mode
 func (r *LoanRepo) Update(ctx context.Context, id int64, in models.UpdateLoanInput) (*models.Loan, error) {
 	now := ts()
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE loans SET name=?, annual_rate=?, account_id=?, category_id=?, is_active=?, updated_at=? WHERE id=?`,
-		in.Name, in.AnnualRate, in.AccountID, in.CategoryID, boolInt(in.IsActive), now, id)
+		`UPDATE loans SET name=?, annual_rate=?, default_account_id=?, category_id=?, is_active=?, updated_at=? WHERE id=?`,
+		in.Name, in.AnnualRate, in.DefaultAccountID, in.CategoryID, boolInt(in.IsActive), now, id)
 	if err != nil {
 		return nil, err
 	}
 	return r.GetByID(ctx, id)
+}
+
+func (r *LoanRepo) SetLoanAccountID(ctx context.Context, loanID, accountID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE loans SET loan_account_id=? WHERE id=?", accountID, loanID)
+	return err
+}
+
+func (r *LoanRepo) SetPlannedID(ctx context.Context, loanID, plannedID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE loans SET planned_id=? WHERE id=?", plannedID, loanID)
+	return err
 }
 
 func (r *LoanRepo) Delete(ctx context.Context, id int64) error {
@@ -103,8 +128,8 @@ func (r *LoanRepo) GetDailySchedule(ctx context.Context, id int64, from, to stri
 		return nil, err
 	}
 
-	// get all payments linked to this loan (only confirmed)
-	rows, err := r.db.QueryContext(ctx, txBase+" WHERE t.loan_id = ? AND t.is_pending = 0 ORDER BY t.date", id)
+	// get all payments linked to this loan
+	rows, err := r.db.QueryContext(ctx, txBase+" WHERE t.loan_id = ? ORDER BY t.date", id)
 	if err != nil {
 		return nil, err
 	}

@@ -17,7 +17,7 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 	ah := &AccountHandler{repo: repos.Account}
 	ch := &CategoryHandler{repo: repos.Category}
 	gh := &SharedGroupHandler{repo: repos.SharedGroup}
-	th := &TransactionHandler{repo: repos.Transaction}
+	th := &TransactionHandler{repo: repos.Transaction, planned: repos.Planned}
 	ph := &PlannedHandler{repo: repos.Planned, txRepo: repos.Transaction}
 	an := &AnalyticsHandler{repo: repos.Analytics}
 	mt := &MetaHandler{repo: repos.Lookup}
@@ -48,6 +48,7 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 
 		api.Route("/accounts", func(ar chi.Router) {
 			ar.Get("/", ah.List)
+			ar.Get("/all", ah.ListAll)
 			ar.Post("/", ah.Create)
 			ar.Get("/{id}", ah.GetByID)
 			ar.Put("/{id}", ah.Update)
@@ -78,7 +79,7 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 			tr.Get("/{id}", th.GetByID)
 			tr.Put("/{id}", th.Update)
 			tr.Delete("/{id}", th.Delete)
-			tr.Post("/{id}/confirm", th.Confirm)
+			tr.Post("/{id}/undo", th.UndoPlanned)
 		})
 
 		api.Route("/planned", func(pr chi.Router) {
@@ -86,9 +87,14 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 			pr.Post("/", ph.Create)
 			pr.Get("/upcoming", ph.Upcoming)
 			pr.Post("/materialize", ph.Materialize)
+			pr.Get("/reminders", ph.ListReminders)
+			pr.Get("/forecast", ph.Forecast)
 			pr.Get("/{id}", ph.GetByID)
 			pr.Put("/{id}", ph.Update)
 			pr.Delete("/{id}", ph.Delete)
+			pr.Post("/{id}/activate", ph.Activate)
+			pr.Post("/{id}/execute", ph.ExecuteReminder)
+			pr.Post("/{id}/undo", ph.UndoReminder)
 		})
 
 		api.Route("/loans", func(lr chi.Router) {

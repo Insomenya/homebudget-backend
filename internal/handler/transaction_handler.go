@@ -7,7 +7,10 @@ import (
 	"homebudget/internal/repository"
 )
 
-type TransactionHandler struct{ repo *repository.TransactionRepo }
+type TransactionHandler struct {
+	repo    *repository.TransactionRepo
+	planned *repository.PlannedRepo
+}
 
 func (h *TransactionHandler) List(w http.ResponseWriter, r *http.Request) {
 	f := models.TransactionFilter{
@@ -20,7 +23,6 @@ func (h *TransactionHandler) List(w http.ResponseWriter, r *http.Request) {
 		SharedGroupID:  qInt64Ptr(r, "shared_group_id"),
 		PaidByMemberID: qInt64Ptr(r, "paid_by_member_id"),
 		IsShared:       qBoolPtr(r, "is_shared"),
-		IsPending:      qBoolPtr(r, "is_pending"),
 		Page:           qInt(r, "page", 1),
 		Limit:          qInt(r, "limit", 20),
 		SortBy:         qStr(r, "sort", "date"),
@@ -103,17 +105,14 @@ func (h *TransactionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-func (h *TransactionHandler) Confirm(w http.ResponseWriter, r *http.Request) {
+// UndoPlanned — отменяет проводку транзакции, созданной из отложенного платежа.
+func (h *TransactionHandler) UndoPlanned(w http.ResponseWriter, r *http.Request) {
 	id, err := urlID(r)
 	if err != nil {
 		writeErr(w, 400, "invalid id"); return
 	}
-	t, err := h.repo.ConfirmPending(r.Context(), id)
-	if err != nil {
+	if err := h.planned.UndoReminderByTxID(r.Context(), id, h.repo); err != nil {
 		writeErr(w, 500, err.Error()); return
 	}
-	if t == nil {
-		writeErr(w, 404, "not found"); return
-	}
-	writeJSON(w, 200, t)
+	w.WriteHeader(204)
 }

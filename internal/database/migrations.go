@@ -13,13 +13,25 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("ddl #%d: %w", i, err)
 		}
 	}
-	addCol(db, "transactions", "is_pending", "INTEGER NOT NULL DEFAULT 0")
-	addCol(db, "transactions", "planned_id", "INTEGER REFERENCES planned_transactions(id) ON DELETE SET NULL")
-	// Drop budget tables if they exist (cleanup from old schema)
+	// Legacy column cleanup — add columns if missing (idempotent)
+	addCol(db, "planned_transactions", "original_day", "INTEGER NOT NULL DEFAULT 0")
+	addCol(db, "planned_transactions", "notify_days_before", "INTEGER NOT NULL DEFAULT 3")
+	addCol(db, "planned_transactions", "overdue_days_limit", "INTEGER NOT NULL DEFAULT 30")
+	addCol(db, "planned_transactions", "loan_id", "INTEGER REFERENCES loans(id) ON DELETE SET NULL")
+	addCol(db, "transactions", "reminder_id", "INTEGER REFERENCES planned_reminders(id) ON DELETE SET NULL")
 	addCol(db, "loans", "end_date", "TEXT NOT NULL DEFAULT ''")
+	addCol(db, "loans", "default_account_id", "INTEGER REFERENCES accounts(id) ON DELETE SET NULL")
+	addCol(db, "loans", "loan_account_id", "INTEGER REFERENCES accounts(id) ON DELETE SET NULL")
+	addCol(db, "loans", "planned_id", "INTEGER REFERENCES planned_transactions(id) ON DELETE SET NULL")
+
+	// Drop old budget tables
 	for _, t := range []string{"budget_cells", "budget_rows", "budget_columns"} {
 		db.Exec("DROP TABLE IF EXISTS " + t)
 	}
+
+	// Remove legacy columns from transactions if they exist (SQLite can't DROP COLUMN easily, ignore)
+	// is_pending and planned_id are legacy — we keep them but ignore on new code
+
 	if err := seed(db); err != nil {
 		return fmt.Errorf("seed: %w", err)
 	}
@@ -55,6 +67,7 @@ var ddl = []string{
 		initial_balance REAL    NOT NULL DEFAULT 0,
 		member_id       INTEGER NOT NULL REFERENCES members(id) ON DELETE RESTRICT,
 		is_archived     INTEGER NOT NULL DEFAULT 0,
+		is_hidden       INTEGER NOT NULL DEFAULT 0,
 		created_at      TEXT    NOT NULL,
 		updated_at      TEXT    NOT NULL
 	)`,
@@ -89,6 +102,57 @@ var ddl = []string{
 		UNIQUE(group_id, member_id)
 	)`,
 
+	`CREATE TABLE IF NOT EXISTS loans (
+		id                INTEGER PRIMARY KEY AUTOINCREMENT,
+		name              TEXT    NOT NULL,
+		principal         REAL    NOT NULL CHECK(principal > 0),
+		annual_rate       REAL    NOT NULL CHECK(annual_rate >= 0),
+		start_date        TEXT    NOT NULL,
+		end_date          TEXT    NOT NULL,
+		monthly_payment   REAL    NOT NULL,
+		already_paid      REAL    NOT NULL DEFAULT 0,
+		account_id        INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+		default_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+		loan_account_id   INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+		category_id       INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+		planned_id        INTEGER REFERENCES planned_transactions(id) ON DELETE SET NULL,
+		is_active         INTEGER NOT NULL DEFAULT 1,
+		created_at        TEXT    NOT NULL,
+		updated_at        TEXT    NOT NULL
+	)`,
+
+	`CREATE TABLE IF NOT EXISTS planned_transactions (
+		id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+		name               TEXT    NOT NULL,
+		amount             REAL    NOT NULL CHECK(amount > 0),
+		type               TEXT    NOT NULL DEFAULT 'expense',
+		category_id        INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+		shared_group_id    INTEGER REFERENCES shared_groups(id) ON DELETE SET NULL,
+		paid_by_member_id  INTEGER REFERENCES members(id) ON DELETE SET NULL,
+		loan_id            INTEGER REFERENCES loans(id) ON DELETE SET NULL,
+		recurrence         TEXT    NOT NULL DEFAULT 'monthly',
+		start_date         TEXT    NOT NULL,
+		end_date           TEXT,
+		next_due           TEXT    NOT NULL,
+		original_day       INTEGER NOT NULL DEFAULT 0,
+		notify_days_before INTEGER NOT NULL DEFAULT 3,
+		overdue_days_limit INTEGER NOT NULL DEFAULT 30,
+		is_active          INTEGER NOT NULL DEFAULT 1,
+		created_at         TEXT    NOT NULL,
+		updated_at         TEXT    NOT NULL
+	)`,
+
+	`CREATE TABLE IF NOT EXISTS planned_reminders (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		planned_id      INTEGER NOT NULL REFERENCES planned_transactions(id) ON DELETE CASCADE,
+		due_date        TEXT    NOT NULL,
+		amount          REAL    NOT NULL,
+		transaction_id  INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+		prev_next_due   TEXT    NOT NULL DEFAULT '',
+		is_executed     INTEGER NOT NULL DEFAULT 0,
+		created_at      TEXT    NOT NULL
+	)`,
+
 	`CREATE TABLE IF NOT EXISTS transactions (
 		id                INTEGER PRIMARY KEY AUTOINCREMENT,
 		date              TEXT    NOT NULL,
@@ -101,65 +165,31 @@ var ddl = []string{
 		shared_group_id   INTEGER REFERENCES shared_groups(id) ON DELETE RESTRICT,
 		paid_by_member_id INTEGER REFERENCES members(id) ON DELETE RESTRICT,
 		loan_id           INTEGER REFERENCES loans(id) ON DELETE SET NULL,
-		is_pending        INTEGER NOT NULL DEFAULT 0,
-		planned_id        INTEGER REFERENCES planned_transactions(id) ON DELETE SET NULL,
+		reminder_id       INTEGER REFERENCES planned_reminders(id) ON DELETE SET NULL,
 		created_at        TEXT    NOT NULL,
 		updated_at        TEXT    NOT NULL
-	)`,
-
-	`CREATE TABLE IF NOT EXISTS planned_transactions (
-		id                INTEGER PRIMARY KEY AUTOINCREMENT,
-		name              TEXT    NOT NULL,
-		amount            REAL    NOT NULL CHECK(amount > 0),
-		type              TEXT    NOT NULL DEFAULT 'expense',
-		account_id        INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
-		category_id       INTEGER REFERENCES categories(id) ON DELETE SET NULL,
-		shared_group_id   INTEGER REFERENCES shared_groups(id) ON DELETE SET NULL,
-		paid_by_member_id INTEGER REFERENCES members(id) ON DELETE SET NULL,
-		recurrence        TEXT    NOT NULL DEFAULT 'monthly',
-		start_date        TEXT    NOT NULL,
-		end_date          TEXT,
-		next_due          TEXT    NOT NULL,
-		notify_days       INTEGER NOT NULL DEFAULT 3,
-		is_auto           INTEGER NOT NULL DEFAULT 0,
-		is_active         INTEGER NOT NULL DEFAULT 1,
-		created_at        TEXT    NOT NULL,
-		updated_at        TEXT    NOT NULL
-	)`,
-
-	`CREATE TABLE IF NOT EXISTS loans (
-		id              INTEGER PRIMARY KEY AUTOINCREMENT,
-		name            TEXT    NOT NULL,
-		principal       REAL    NOT NULL CHECK(principal > 0),
-		annual_rate     REAL    NOT NULL CHECK(annual_rate >= 0),
-		start_date      TEXT    NOT NULL,
-		end_date        TEXT    NOT NULL,
-		monthly_payment REAL    NOT NULL,
-		already_paid    REAL    NOT NULL DEFAULT 0,
-		account_id      INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
-		category_id     INTEGER REFERENCES categories(id) ON DELETE SET NULL,
-		is_active       INTEGER NOT NULL DEFAULT 1,
-		created_at      TEXT    NOT NULL,
-		updated_at      TEXT    NOT NULL
 	)`,
 
 	// ── Indexes ─────────────────────────────────────
-	`CREATE INDEX IF NOT EXISTS idx_tx_date      ON transactions(date)`,
-	`CREATE INDEX IF NOT EXISTS idx_tx_type      ON transactions(type)`,
-	`CREATE INDEX IF NOT EXISTS idx_tx_account   ON transactions(account_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_tx_category  ON transactions(category_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_tx_group     ON transactions(shared_group_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_tx_paid_by   ON transactions(paid_by_member_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_tx_loan      ON transactions(loan_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_tx_pending   ON transactions(is_pending)`,
-	`CREATE INDEX IF NOT EXISTS idx_tx_planned   ON transactions(planned_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_cat_parent   ON categories(parent_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_acc_member   ON accounts(member_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_sgm_group    ON shared_group_members(group_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_pt_next_due  ON planned_transactions(next_due)`,
-	`CREATE INDEX IF NOT EXISTS idx_pt_active    ON planned_transactions(is_active)`,
-	`CREATE INDEX IF NOT EXISTS idx_lookup_group ON lookup_values(group_name, sort_order)`,
-	`CREATE INDEX IF NOT EXISTS idx_loan_active  ON loans(is_active)`,
+	`CREATE INDEX IF NOT EXISTS idx_tx_date       ON transactions(date)`,
+	`CREATE INDEX IF NOT EXISTS idx_tx_type       ON transactions(type)`,
+	`CREATE INDEX IF NOT EXISTS idx_tx_account    ON transactions(account_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_tx_category   ON transactions(category_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_tx_group      ON transactions(shared_group_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_tx_paid_by    ON transactions(paid_by_member_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_tx_loan       ON transactions(loan_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_tx_reminder   ON transactions(reminder_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_cat_parent    ON categories(parent_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_acc_member    ON accounts(member_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_sgm_group     ON shared_group_members(group_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_pt_next_due   ON planned_transactions(next_due)`,
+	`CREATE INDEX IF NOT EXISTS idx_pt_active     ON planned_transactions(is_active)`,
+	`CREATE INDEX IF NOT EXISTS idx_pt_loan       ON planned_transactions(loan_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_pr_planned    ON planned_reminders(planned_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_pr_executed   ON planned_reminders(is_executed)`,
+	`CREATE INDEX IF NOT EXISTS idx_lookup_group  ON lookup_values(group_name, sort_order)`,
+	`CREATE INDEX IF NOT EXISTS idx_loan_active   ON loans(is_active)`,
+	`CREATE INDEX IF NOT EXISTS idx_acc_hidden    ON accounts(is_hidden)`,
 }
 
 func seed(db *sql.DB) error {
@@ -178,7 +208,7 @@ func seed(db *sql.DB) error {
 
 	accounts := []struct{ name, typ string }{{"Наличные", "cash"}, {"Карта", "bank_card"}}
 	for _, a := range accounts {
-		db.Exec(`INSERT INTO accounts (name,type,currency,initial_balance,member_id,is_archived,created_at,updated_at) VALUES (?,?,'RUB',0,1,0,?,?)`, a.name, a.typ, now, now)
+		db.Exec(`INSERT INTO accounts (name,type,currency,initial_balance,member_id,is_archived,is_hidden,created_at,updated_at) VALUES (?,?,'RUB',0,1,0,0,?,?)`, a.name, a.typ, now, now)
 	}
 
 	cats := []struct{ name, typ, icon string; order int }{

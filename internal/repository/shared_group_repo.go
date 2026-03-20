@@ -169,7 +169,7 @@ func (r *SharedGroupRepo) paidByGroup(
 ) (map[int64]float64, float64, error) {
 	q := `SELECT paid_by_member_id, SUM(amount)
 	      FROM transactions
-	      WHERE shared_group_id = ? AND paid_by_member_id IS NOT NULL AND is_pending = 0`
+	      WHERE shared_group_id = ? AND paid_by_member_id IS NOT NULL`
 	args := []interface{}{groupID}
 
 	if dateFrom != "" {
@@ -295,7 +295,7 @@ func (r *SharedGroupRepo) GetTurnover(
 func (r *SharedGroupRepo) periodTransactions(
 	ctx context.Context, gid int64, from, to string,
 ) ([]models.Transaction, error) {
-	q := txBase + " WHERE t.shared_group_id = ? AND t.is_pending = 0"
+	q := txBase + " WHERE t.shared_group_id = ?"
 	args := []interface{}{gid}
 	if from != "" {
 		q += " AND t.date >= ?"
@@ -338,7 +338,7 @@ func (r *SharedGroupRepo) ListSettlementSummariesFast(
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT shared_group_id, paid_by_member_id, amount
 		 FROM transactions
-		 WHERE shared_group_id IS NOT NULL AND is_pending = 0`)
+		 WHERE shared_group_id IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}

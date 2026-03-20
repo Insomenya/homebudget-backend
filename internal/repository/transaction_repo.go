@@ -16,18 +16,17 @@ func NewTransactionRepo(db *sql.DB) *TransactionRepo { return &TransactionRepo{d
 const txBase = `SELECT t.id, t.date, t.amount, t.description, t.type,
 	t.account_id, t.to_account_id, t.category_id,
 	t.shared_group_id, t.paid_by_member_id, t.loan_id,
-	t.is_pending, t.planned_id,
+	t.reminder_id,
 	t.created_at, t.updated_at
 	FROM transactions t`
 
 func scanTx(s scannable) (models.Transaction, error) {
 	var t models.Transaction
-	var accID, toAccID, catID, grpID, paidID, loanID, plannedID sql.NullInt64
-	var pending int
+	var accID, toAccID, catID, grpID, paidID, loanID, reminderID sql.NullInt64
 	err := s.Scan(
 		&t.ID, &t.Date, &t.Amount, &t.Description, &t.Type,
 		&accID, &toAccID, &catID, &grpID, &paidID, &loanID,
-		&pending, &plannedID,
+		&reminderID,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if accID.Valid {
@@ -48,10 +47,9 @@ func scanTx(s scannable) (models.Transaction, error) {
 	if loanID.Valid {
 		t.LoanID = &loanID.Int64
 	}
-	if plannedID.Valid {
-		t.PlannedID = &plannedID.Int64
+	if reminderID.Valid {
+		t.ReminderID = &reminderID.Int64
 	}
-	t.IsPending = pending == 1
 	return t, err
 }
 
@@ -72,12 +70,12 @@ func (r *TransactionRepo) Create(ctx context.Context, in models.CreateTransactio
 		`INSERT INTO transactions
 		 (date,amount,description,type,account_id,to_account_id,
 		  category_id,shared_group_id,paid_by_member_id,loan_id,
-		  is_pending,planned_id,created_at,updated_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		  reminder_id,created_at,updated_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		in.Date, in.Amount, in.Description, in.Type,
 		in.AccountID, in.ToAccountID, in.CategoryID,
 		in.SharedGroupID, in.PaidByMemberID, in.LoanID,
-		boolInt(in.IsPending), in.PlannedID, now, now)
+		in.ReminderID, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -92,12 +90,12 @@ func (r *TransactionRepo) Update(ctx context.Context, id int64, in models.Update
 		 SET date=?,amount=?,description=?,type=?,
 		     account_id=?,to_account_id=?,category_id=?,
 		     shared_group_id=?,paid_by_member_id=?,loan_id=?,
-		     is_pending=?,planned_id=?,updated_at=?
+		     reminder_id=?,updated_at=?
 		 WHERE id=?`,
 		in.Date, in.Amount, in.Description, in.Type,
 		in.AccountID, in.ToAccountID, in.CategoryID,
 		in.SharedGroupID, in.PaidByMemberID, in.LoanID,
-		boolInt(in.IsPending), in.PlannedID, now, id)
+		in.ReminderID, now, id)
 	if err != nil {
 		return nil, err
 	}
@@ -107,27 +105,6 @@ func (r *TransactionRepo) Update(ctx context.Context, id int64, in models.Update
 func (r *TransactionRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM transactions WHERE id=?", id)
 	return err
-}
-
-func (r *TransactionRepo) ConfirmPending(ctx context.Context, id int64) (*models.Transaction, error) {
-	now := ts()
-	_, err := r.db.ExecContext(ctx,
-		"UPDATE transactions SET is_pending=0, updated_at=? WHERE id=?", now, id)
-	if err != nil {
-		return nil, err
-	}
-	return r.GetByID(ctx, id)
-}
-
-func (r *TransactionRepo) ExistsPendingForPlanned(ctx context.Context, plannedID int64, date string) (bool, error) {
-	var cnt int
-	err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM transactions WHERE planned_id=? AND date=? AND is_pending=1",
-		plannedID, date).Scan(&cnt)
-	if err != nil {
-		return false, err
-	}
-	return cnt > 0, nil
 }
 
 func (r *TransactionRepo) List(ctx context.Context, f models.TransactionFilter) (*models.TransactionList, error) {
@@ -179,14 +156,14 @@ func (r *TransactionRepo) PeriodSummary(ctx context.Context, from, to string) (*
 	var income, expenses float64
 
 	err := r.db.QueryRowContext(ctx,
-		"SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type='income' AND is_pending=0 AND date>=? AND date<=?",
+		"SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type='income' AND date>=? AND date<=?",
 		from, to).Scan(&income)
 	if err != nil {
 		return nil, err
 	}
 
 	err = r.db.QueryRowContext(ctx,
-		"SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type='expense' AND is_pending=0 AND date>=? AND date<=?",
+		"SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type='expense' AND date>=? AND date<=?",
 		from, to).Scan(&expenses)
 	if err != nil {
 		return nil, err
@@ -196,7 +173,7 @@ func (r *TransactionRepo) PeriodSummary(ctx context.Context, from, to string) (*
 		SELECT c.id, c.name, c.icon, SUM(t.amount)
 		FROM transactions t
 		JOIN categories c ON c.id = t.category_id
-		WHERE t.type='expense' AND t.is_pending=0 AND t.date>=? AND t.date<=?
+		WHERE t.type='expense' AND t.date>=? AND t.date<=?
 		GROUP BY c.id, c.name, c.icon
 		ORDER BY SUM(t.amount) DESC`, from, to)
 	if err != nil {
@@ -228,7 +205,7 @@ func (r *TransactionRepo) Recent(ctx context.Context, limit int) ([]models.Trans
 		limit = 10
 	}
 	rows, err := r.db.QueryContext(ctx,
-		txBase+" WHERE t.is_pending=0 ORDER BY t.date DESC, t.id DESC LIMIT ?", limit)
+		txBase+" ORDER BY t.date DESC, t.id DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -290,10 +267,6 @@ func buildTxWhere(f models.TransactionFilter) (string, []interface{}) {
 		} else {
 			c = append(c, "t.shared_group_id IS NULL")
 		}
-	}
-	if f.IsPending != nil {
-		c = append(c, "t.is_pending=?")
-		a = append(a, boolInt(*f.IsPending))
 	}
 	return strings.Join(c, " AND "), a
 }

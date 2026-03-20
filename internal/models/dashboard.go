@@ -32,5 +32,5 @@ type Dashboard struct {
 	Settlements  []GroupSettlementSummary `json:"settlements"`
 	Recent       []Transaction           `json:"recent"`
 	Upcoming     []PlannedTransaction    `json:"upcoming"`
-	Pending      []Transaction           `json:"pending"`
+	Reminders    []PlannedReminder       `json:"reminders"`
 }

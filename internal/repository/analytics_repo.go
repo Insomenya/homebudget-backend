@@ -20,7 +20,7 @@ func (r *AnalyticsRepo) CategoryBreakdown(ctx context.Context, f models.Analytic
 		txType = "expense"
 	}
 
-	conds := []string{"t.type = ?", "t.is_pending = 0"}
+	conds := []string{"t.type = ?"}
 	args := []interface{}{txType}
 
 	if f.DateFrom != "" {
@@ -97,7 +97,7 @@ func (r *AnalyticsRepo) Trends(ctx context.Context, f models.AnalyticsFilter) (*
 	}
 	format := granFormat(gran)
 
-	conds := []string{"1=1", "t.is_pending = 0"}
+	conds := []string{"1=1"}
 	var args []interface{}
 
 	if f.DateFrom != "" {

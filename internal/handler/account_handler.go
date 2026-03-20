@@ -10,13 +10,23 @@ import (
 type AccountHandler struct{ repo *repository.AccountRepo }
 
 func (h *AccountHandler) List(w http.ResponseWriter, r *http.Request) {
-	// Всегда возвращаем с балансами
 	items, err := h.repo.ListWithBalances(r.Context())
 	if err != nil {
 		writeErr(w, 500, err.Error()); return
 	}
 	if items == nil {
 		items = []models.AccountBalance{}
+	}
+	writeJSON(w, 200, items)
+}
+
+func (h *AccountHandler) ListAll(w http.ResponseWriter, r *http.Request) {
+	items, err := h.repo.ListAll(r.Context())
+	if err != nil {
+		writeErr(w, 500, err.Error()); return
+	}
+	if items == nil {
+		items = []models.Account{}
 	}
 	writeJSON(w, 200, items)
 }

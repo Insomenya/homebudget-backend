@@ -97,6 +97,76 @@ func (h *PlannedHandler) Upcoming(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PlannedHandler) Materialize(w http.ResponseWriter, r *http.Request) {
-	created := h.repo.MaterializeDue(r.Context(), h.txRepo)
+	created := h.repo.MaterializeReminders(r.Context())
 	writeJSON(w, 200, map[string]int{"created": created})
+}
+
+func (h *PlannedHandler) Activate(w http.ResponseWriter, r *http.Request) {
+	id, err := urlID(r)
+	if err != nil {
+		writeErr(w, 400, "invalid id"); return
+	}
+	p, err := h.repo.ActivatePlanned(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error()); return
+	}
+	if p == nil {
+		writeErr(w, 404, "not found"); return
+	}
+	writeJSON(w, 200, p)
+}
+
+// Reminders
+func (h *PlannedHandler) ListReminders(w http.ResponseWriter, r *http.Request) {
+	items, err := h.repo.ListActiveReminders(r.Context())
+	if err != nil {
+		writeErr(w, 500, err.Error()); return
+	}
+	if items == nil {
+		items = []models.PlannedReminder{}
+	}
+	writeJSON(w, 200, items)
+}
+
+func (h *PlannedHandler) ExecuteReminder(w http.ResponseWriter, r *http.Request) {
+	id, err := urlID(r)
+	if err != nil {
+		writeErr(w, 400, "invalid id"); return
+	}
+	var in models.ExecuteReminderInput
+	if err := readJSON(r, &in); err != nil {
+		// Allow empty body — will use defaults
+		in = models.ExecuteReminderInput{}
+	}
+	tx, err := h.repo.ExecuteReminder(r.Context(), id, in, h.txRepo)
+	if err != nil {
+		writeErr(w, 500, err.Error()); return
+	}
+	if tx == nil {
+		writeErr(w, 404, "not found"); return
+	}
+	writeJSON(w, 200, tx)
+}
+
+func (h *PlannedHandler) UndoReminder(w http.ResponseWriter, r *http.Request) {
+	id, err := urlID(r)
+	if err != nil {
+		writeErr(w, 400, "invalid id"); return
+	}
+	if err := h.repo.UndoReminder(r.Context(), id, h.txRepo); err != nil {
+		writeErr(w, 500, err.Error()); return
+	}
+	w.WriteHeader(204)
+}
+
+func (h *PlannedHandler) Forecast(w http.ResponseWriter, r *http.Request) {
+	days := qInt(r, "days", 30)
+	items, err := h.repo.Forecast(r.Context(), days)
+	if err != nil {
+		writeErr(w, 500, err.Error()); return
+	}
+	if items == nil {
+		items = []models.PlannedForecastItem{}
+	}
+	writeJSON(w, 200, items)
 }
