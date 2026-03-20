@@ -27,18 +27,7 @@ type Loan struct {
 }
 
 func (l *Loan) TermMonths() int {
-	start, err1 := time.Parse("2006-01-02", l.StartDate)
-	end, err2 := time.Parse("2006-01-02", l.EndDate)
-	if err1 != nil || err2 != nil {
-		return 0
-	}
-	months := 0
-	cur := start
-	for cur.Before(end) {
-		cur = cur.AddDate(0, 1, 0)
-		months++
-	}
-	return months
+	return CalcTermMonths(l.StartDate, l.EndDate)
 }
 
 type CreateLoanInput struct {
@@ -91,7 +80,12 @@ func (in *CreateLoanInput) Validate() string {
 	return ""
 }
 
-// CalcTermMonths вычисляет количество месяцев между двумя датами.
+// ── Helpers ─────────────────────────────────────────
+
+func TodayStr() string {
+	return time.Now().Format("2006-01-02")
+}
+
 func CalcTermMonths(startDate, endDate string) int {
 	start, _ := time.Parse("2006-01-02", startDate)
 	end, _ := time.Parse("2006-01-02", endDate)

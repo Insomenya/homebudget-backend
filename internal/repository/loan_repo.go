@@ -83,10 +83,10 @@ func (r *LoanRepo) Create(ctx context.Context, in models.CreateLoanInput) (*mode
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO loans (name,principal,annual_rate,start_date,end_date,monthly_payment,already_paid,
 		 account_id,default_account_id,loan_account_id,category_id,planned_id,is_active,created_at,updated_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`,
+		 VALUES (?,?,?,?,?,?,?,?,?,NULL,?,NULL,1,?,?)`,
 		in.Name, in.Principal, in.AnnualRate, in.StartDate, in.EndDate, pmt,
-		in.AlreadyPaid, in.AccountID, in.DefaultAccountID, nil,
-		in.CategoryID, nil, now, now)
+		in.AlreadyPaid, in.AccountID, in.DefaultAccountID,
+		in.CategoryID, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -122,13 +122,83 @@ func (r *LoanRepo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
+// DeleteWithCleanup удаляет кредит вместе с:
+// - отложенным платежом (и его неисполненными напоминаниями)
+// - скрытым loan_account (если нет транзакций, иначе оставляем)
+// Проведённые транзакции НЕ удаляются.
+func (r *LoanRepo) DeleteWithCleanup(ctx context.Context, id int64, planned *PlannedRepo, accounts *AccountRepo) error {
+	loan, err := r.GetByID(ctx, id)
+	if err != nil || loan == nil {
+		return err
+	}
+
+	// Delete planned transaction (cascade deletes reminders)
+	if loan.PlannedID != nil {
+		planned.Delete(ctx, *loan.PlannedID)
+	}
+
+	// Delete loan account if no transactions reference it
+	if loan.LoanAccountID != nil {
+		var cnt int
+		r.db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM transactions WHERE account_id=? OR to_account_id=?",
+			*loan.LoanAccountID, *loan.LoanAccountID).Scan(&cnt)
+		if cnt == 0 {
+			accounts.Delete(ctx, *loan.LoanAccountID)
+		}
+	}
+
+	// Unlink loan_id from remaining transactions (don't delete them)
+	r.db.ExecContext(ctx, "UPDATE transactions SET loan_id=NULL WHERE loan_id=?", id)
+
+	return r.Delete(ctx, id)
+}
+
+// RecalcPayment пересчитывает monthly_payment на основе текущего тела и обновляет planned.
+func (r *LoanRepo) RecalcPayment(ctx context.Context, id int64, planned *PlannedRepo) error {
+	loan, err := r.GetByID(ctx, id)
+	if err != nil || loan == nil {
+		return err
+	}
+
+	// Считаем фактически оплаченное тело из транзакций
+	var totalPaid float64
+	r.db.QueryRowContext(ctx,
+		"SELECT COALESCE(SUM(amount),0) FROM transactions WHERE loan_id=?", id).Scan(&totalPaid)
+
+	remainingPrincipal := loan.Principal - loan.AlreadyPaid - totalPaid
+	if remainingPrincipal < 0 {
+		remainingPrincipal = 0
+	}
+
+	// Оставшиеся месяцы от сегодня до end_date
+	today := models.TodayStr()
+	remainingMonths := models.CalcTermMonths(today, loan.EndDate)
+	if remainingMonths < 1 {
+		remainingMonths = 1
+	}
+
+	newPayment := models.CalcMonthlyPayment(remainingPrincipal, loan.AnnualRate, remainingMonths)
+
+	now := ts()
+	r.db.ExecContext(ctx,
+		"UPDATE loans SET monthly_payment=?, updated_at=? WHERE id=?",
+		newPayment, now, id)
+
+	// Update planned amount
+	if loan.PlannedID != nil {
+		planned.UpdateAmount(ctx, *loan.PlannedID, newPayment)
+	}
+
+	return nil
+}
+
 func (r *LoanRepo) GetDailySchedule(ctx context.Context, id int64, from, to string) (*models.LoanDailySchedule, error) {
 	loan, err := r.GetByID(ctx, id)
 	if err != nil || loan == nil {
 		return nil, err
 	}
 
-	// get all payments linked to this loan
 	rows, err := r.db.QueryContext(ctx, txBase+" WHERE t.loan_id = ? ORDER BY t.date", id)
 	if err != nil {
 		return nil, err

@@ -21,7 +21,12 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 	ph := &PlannedHandler{repo: repos.Planned, txRepo: repos.Transaction}
 	an := &AnalyticsHandler{repo: repos.Analytics}
 	mt := &MetaHandler{repo: repos.Lookup}
-	lh := &LoanHandler{repo: repos.Loan}
+	lh := &LoanHandler{
+		repo:    repos.Loan,
+		account: repos.Account,
+		planned: repos.Planned,
+		tx:      repos.Transaction,
+	}
 	dh := &DashboardHandler{
 		accounts: repos.Account, transactions: repos.Transaction,
 		groups: repos.SharedGroup, planned: repos.Planned,
