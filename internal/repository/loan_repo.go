@@ -1,3 +1,4 @@
+// FILE: internal/repository/loan_repo.go
 package repository
 
 import (
@@ -154,25 +155,51 @@ func (r *LoanRepo) DeleteWithCleanup(ctx context.Context, id int64, planned *Pla
 	return r.Delete(ctx, id)
 }
 
-// RecalcPayment пересчитывает monthly_payment на основе текущего тела и обновляет planned.
+// RecalcPayment пересчитывает monthly_payment на основе текущего тела долга.
+// Вычисляет оставшийся долг, прогоняя день за днём с учётом всех платежей.
 func (r *LoanRepo) RecalcPayment(ctx context.Context, id int64, planned *PlannedRepo) error {
 	loan, err := r.GetByID(ctx, id)
 	if err != nil || loan == nil {
 		return err
 	}
 
-	// Считаем фактически оплаченное тело из транзакций
-	var totalPaid float64
-	r.db.QueryRowContext(ctx,
-		"SELECT COALESCE(SUM(amount),0) FROM transactions WHERE loan_id=?", id).Scan(&totalPaid)
+	// Get all payments for this loan
+	rows, err := r.db.QueryContext(ctx, txBase+" WHERE t.loan_id = ? ORDER BY t.date", id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
 
-	remainingPrincipal := loan.Principal - loan.AlreadyPaid - totalPaid
-	if remainingPrincipal < 0 {
-		remainingPrincipal = 0
+	var payments []models.Transaction
+	for rows.Next() {
+		t, err := scanTx(rows)
+		if err != nil {
+			return err
+		}
+		payments = append(payments, t)
+	}
+	if err := rows.Err(); err != nil {
+		return err
 	}
 
-	// Оставшиеся месяцы от сегодня до end_date
+	// Calculate current debt by replaying all days
 	today := models.TodayStr()
+	schedule := models.BuildDailySchedule(*loan, payments, loan.StartDate, today)
+
+	remainingPrincipal := schedule.CurrentDebt
+	if remainingPrincipal <= 0 {
+		// Loan is paid off
+		now := ts()
+		r.db.ExecContext(ctx,
+			"UPDATE loans SET monthly_payment=0, updated_at=? WHERE id=?",
+			now, id)
+		if loan.PlannedID != nil {
+			planned.UpdateAmount(ctx, *loan.PlannedID, 0)
+		}
+		return nil
+	}
+
+	// Remaining months from today to end_date
 	remainingMonths := models.CalcTermMonths(today, loan.EndDate)
 	if remainingMonths < 1 {
 		remainingMonths = 1

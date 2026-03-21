@@ -1,3 +1,4 @@
+// FILE: internal/repository/planned_repo.go
 package repository
 
 import (
@@ -389,7 +390,6 @@ func (r *PlannedRepo) MaterializeReminders(ctx context.Context) int {
 		return 0
 	}
 
-	today := time.Now().Format("2006-01-02")
 	created := 0
 
 	for _, pt := range active {
@@ -487,11 +487,11 @@ func (r *PlannedRepo) ActivatePlanned(ctx context.Context, id int64) (*models.Pl
 		return nil, err
 	}
 
-	today := time.Now().Format("2006-01-02")
+	todayStr := time.Now().Format("2006-01-02")
 	nextDue := pt.NextDue
 
 	// Advance until next_due is in the future
-	for nextDue <= today {
+	for nextDue <= todayStr {
 		if pt.Recurrence == models.RecurrenceOnce {
 			break
 		}

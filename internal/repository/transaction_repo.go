@@ -1,3 +1,4 @@
+// FILE: internal/repository/transaction_repo.go
 package repository
 
 import (
@@ -9,9 +10,18 @@ import (
 	"homebudget/internal/models"
 )
 
-type TransactionRepo struct{ db *sql.DB }
+type TransactionRepo struct {
+	db      *sql.DB
+	loanCb  func(ctx context.Context, loanID int64) // callback to recalc loan after tx change
+}
 
 func NewTransactionRepo(db *sql.DB) *TransactionRepo { return &TransactionRepo{db: db} }
+
+// SetLoanCallback sets a callback that is called after a transaction
+// with loan_id is created/updated/deleted, to recalculate the loan.
+func (r *TransactionRepo) SetLoanCallback(cb func(ctx context.Context, loanID int64)) {
+	r.loanCb = cb
+}
 
 const txBase = `SELECT t.id, t.date, t.amount, t.description, t.type,
 	t.account_id, t.to_account_id, t.category_id,
@@ -80,10 +90,19 @@ func (r *TransactionRepo) Create(ctx context.Context, in models.CreateTransactio
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+
+	// Recalc loan if this transaction is linked to one
+	if in.LoanID != nil && r.loanCb != nil {
+		r.loanCb(ctx, *in.LoanID)
+	}
+
 	return r.GetByID(ctx, id)
 }
 
 func (r *TransactionRepo) Update(ctx context.Context, id int64, in models.UpdateTransactionInput) (*models.Transaction, error) {
+	// Get old transaction to check if loan changed
+	old, _ := r.GetByID(ctx, id)
+
 	now := ts()
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE transactions
@@ -99,12 +118,35 @@ func (r *TransactionRepo) Update(ctx context.Context, id int64, in models.Update
 	if err != nil {
 		return nil, err
 	}
+
+	// Recalc affected loans
+	if r.loanCb != nil {
+		if old != nil && old.LoanID != nil {
+			r.loanCb(ctx, *old.LoanID)
+		}
+		if in.LoanID != nil && (old == nil || old.LoanID == nil || *old.LoanID != *in.LoanID) {
+			r.loanCb(ctx, *in.LoanID)
+		}
+	}
+
 	return r.GetByID(ctx, id)
 }
 
 func (r *TransactionRepo) Delete(ctx context.Context, id int64) error {
+	// Get transaction before deleting to know its loan_id
+	old, _ := r.GetByID(ctx, id)
+
 	_, err := r.db.ExecContext(ctx, "DELETE FROM transactions WHERE id=?", id)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Recalc loan
+	if old != nil && old.LoanID != nil && r.loanCb != nil {
+		r.loanCb(ctx, *old.LoanID)
+	}
+
+	return nil
 }
 
 func (r *TransactionRepo) List(ctx context.Context, f models.TransactionFilter) (*models.TransactionList, error) {

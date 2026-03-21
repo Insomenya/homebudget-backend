@@ -1,3 +1,4 @@
+// FILE: internal/models/loan.go
 package models
 
 import (
@@ -102,7 +103,7 @@ func CalcTermMonths(startDate, endDate string) int {
 }
 
 func CalcMonthlyPayment(remainingPrincipal, annualRate float64, remainingMonths int) float64 {
-	if remainingMonths <= 0 {
+	if remainingMonths <= 0 || remainingPrincipal <= 0 {
 		return 0
 	}
 	mr := annualRate / 100.0 / 12.0
@@ -160,11 +161,15 @@ var monthNames = []string{
 	"Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 }
 
+// BuildDailySchedule builds a day-by-day loan schedule.
+// Interest accrues from startDate. Payments reduce accrued interest first, then principal.
+// Multiple payments on the same day are summed.
 func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate string) *LoanDailySchedule {
 	start, _ := time.Parse("2006-01-02", loan.StartDate)
 	from, _ := time.Parse("2006-01-02", fromDate)
 	to, _ := time.Parse("2006-01-02", toDate)
 
+	// Build payment map: sum all payments per day
 	payMap := make(map[string]float64)
 	for _, p := range payments {
 		payMap[p.Date] += p.Amount
@@ -177,6 +182,7 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 	var accumInterest float64
 	var totalPaid, totalInterest float64
 
+	// Process days before the visible range (from start_date to from-1)
 	for d := start; d.Before(from); d = d.AddDate(0, 0, 1) {
 		if debt <= 0.005 {
 			break
@@ -187,8 +193,9 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 		totalInterest += interest
 
 		ds := d.Format("2006-01-02")
-		if pmt, ok := payMap[ds]; ok {
-			if accumInterest >= pmt {
+		if pmt, ok := payMap[ds]; ok && pmt > 0 {
+			totalPaid += pmt
+			if pmt <= accumInterest {
 				accumInterest -= pmt
 			} else {
 				principalPart := pmt - accumInterest
@@ -198,7 +205,6 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 					debt = 0
 				}
 			}
-			totalPaid += pmt
 		}
 	}
 
@@ -220,7 +226,8 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 		isPayDay := pmt > 0
 
 		if isPayDay {
-			if accumInterest >= pmt {
+			totalPaid += pmt
+			if pmt <= accumInterest {
 				accumInterest -= pmt
 			} else {
 				principalPart := pmt - accumInterest
@@ -230,7 +237,6 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 					debt = 0
 				}
 			}
-			totalPaid += pmt
 		}
 
 		monthKey := d.Format("2006-01")
@@ -263,120 +269,5 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 		TotalPaid:     math.Round(totalPaid*100) / 100,
 		TotalInterest: math.Round(totalInterest*100) / 100,
 		Months:        months,
-	}
-}
-
-// ── Calculator (stateless) ──────────────────────────
-
-type LoanCalcInput struct {
-	Principal    float64 `json:"principal"`
-	AnnualRate   float64 `json:"annual_rate"`
-	StartDate    string  `json:"start_date"`
-	EndDate      string  `json:"end_date"`
-	ExtraPayment float64 `json:"extra_payment"`
-}
-
-type LoanPayment struct {
-	Month         int     `json:"month"`
-	Date          string  `json:"date"`
-	Payment       float64 `json:"payment"`
-	PrincipalPart float64 `json:"principal"`
-	InterestPart  float64 `json:"interest"`
-	Extra         float64 `json:"extra"`
-	Remaining     float64 `json:"remaining"`
-	CumPaid       float64 `json:"cumulative_paid"`
-	CumInterest   float64 `json:"cumulative_interest"`
-}
-
-type LoanCalcResult struct {
-	MonthlyPayment   float64       `json:"monthly_payment"`
-	TotalPaid        float64       `json:"total_paid"`
-	TotalInterest    float64       `json:"total_interest"`
-	OverpaymentRatio float64       `json:"overpayment_ratio"`
-	EffectiveMonths  int           `json:"effective_months"`
-	Schedule         []LoanPayment `json:"schedule"`
-}
-
-func (in *LoanCalcInput) Validate() string {
-	if in.Principal <= 0 {
-		return "principal must be positive"
-	}
-	if in.AnnualRate < 0 {
-		return "annual_rate cannot be negative"
-	}
-	if in.StartDate == "" || in.EndDate == "" {
-		return "start_date and end_date required"
-	}
-	if _, err := time.Parse("2006-01-02", in.StartDate); err != nil {
-		return "start_date must be YYYY-MM-DD"
-	}
-	if _, err := time.Parse("2006-01-02", in.EndDate); err != nil {
-		return "end_date must be YYYY-MM-DD"
-	}
-	if in.ExtraPayment < 0 {
-		return "extra_payment cannot be negative"
-	}
-	return ""
-}
-
-func r2(v float64) float64 { return math.Round(v*100) / 100 }
-
-func (in *LoanCalcInput) Calculate() *LoanCalcResult {
-	termMonths := CalcTermMonths(in.StartDate, in.EndDate)
-	pmt := CalcMonthlyPayment(in.Principal, in.AnnualRate, termMonths)
-	mr := in.AnnualRate / 100.0 / 12.0
-	start, _ := time.Parse("2006-01-02", in.StartDate)
-	remaining := in.Principal
-	var cumPaid, cumInterest float64
-	schedule := make([]LoanPayment, 0, termMonths)
-
-	for month := 1; remaining > 0.005; month++ {
-		interest := remaining * mr
-		principalPart := pmt - interest
-		extra := in.ExtraPayment
-
-		totalPrincipal := principalPart + extra
-		if totalPrincipal > remaining {
-			if principalPart >= remaining {
-				principalPart = remaining
-				extra = 0
-			} else {
-				extra = remaining - principalPart
-			}
-			totalPrincipal = principalPart + extra
-		}
-
-		remaining -= totalPrincipal
-		if remaining < 0.005 {
-			remaining = 0
-		}
-
-		payment := interest + totalPrincipal
-		cumPaid += payment
-		cumInterest += interest
-
-		date := start.AddDate(0, month, 0)
-
-		schedule = append(schedule, LoanPayment{
-			Month: month, Date: date.Format("2006-01-02"),
-			Payment: r2(payment), PrincipalPart: r2(principalPart),
-			InterestPart: r2(interest), Extra: r2(extra),
-			Remaining: r2(remaining), CumPaid: r2(cumPaid), CumInterest: r2(cumInterest),
-		})
-
-		if remaining == 0 {
-			break
-		}
-	}
-
-	ratio := 0.0
-	if in.Principal > 0 {
-		ratio = r2(cumPaid / in.Principal)
-	}
-
-	return &LoanCalcResult{
-		MonthlyPayment: r2(pmt), TotalPaid: r2(cumPaid),
-		TotalInterest: r2(cumInterest), OverpaymentRatio: ratio,
-		EffectiveMonths: len(schedule), Schedule: schedule,
 	}
 }

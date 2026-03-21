@@ -1,3 +1,4 @@
+// FILE: cmd/server/main.go
 package main
 
 import (
@@ -39,6 +40,12 @@ func main() {
 		Lookup:      repository.NewLookupRepo(db),
 		Loan:        repository.NewLoanRepo(db),
 	}
+
+	// Wire up loan recalc callback: when a transaction with loan_id is
+	// created/updated/deleted, automatically recalculate the loan payment.
+	repos.Transaction.SetLoanCallback(func(ctx context.Context, loanID int64) {
+		repos.Loan.RecalcPayment(ctx, loanID, repos.Planned)
+	})
 
 	router := handler.NewRouter(repos, cfg.CORSOrigin)
 
