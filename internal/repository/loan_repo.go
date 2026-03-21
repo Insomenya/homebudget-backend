@@ -14,7 +14,7 @@ func NewLoanRepo(db *sql.DB) *LoanRepo { return &LoanRepo{db: db} }
 
 const loanCols = `id, name, principal, annual_rate, start_date, end_date,
 	monthly_payment, already_paid, account_id, default_account_id, loan_account_id,
-	category_id, planned_id, is_active, created_at, updated_at`
+	category_id, planned_id, accounting_start_date, initial_accrued_interest, is_active, created_at, updated_at`
 
 func scanLoan(s scannable) (models.Loan, error) {
 	var l models.Loan
@@ -22,7 +22,7 @@ func scanLoan(s scannable) (models.Loan, error) {
 	var active int
 	err := s.Scan(&l.ID, &l.Name, &l.Principal, &l.AnnualRate,
 		&l.StartDate, &l.EndDate, &l.MonthlyPayment, &l.AlreadyPaid,
-		&accID, &defAccID, &loanAccID, &catID, &plannedID, &active,
+		&accID, &defAccID, &loanAccID, &catID, &plannedID, &l.AccountingStartDate, &l.InitialAccruedInterest, &active,
 		&l.CreatedAt, &l.UpdatedAt)
 	if accID.Valid {
 		l.AccountID = &accID.Int64
@@ -80,14 +80,19 @@ func (r *LoanRepo) GetByID(ctx context.Context, id int64) (*models.Loan, error) 
 
 func (r *LoanRepo) Create(ctx context.Context, in models.CreateLoanInput) (*models.Loan, error) {
 	now := ts()
+	accountingStart := in.StartDate
+	if in.AccountingStartDate != nil && *in.AccountingStartDate != "" {
+		accountingStart = *in.AccountingStartDate
+	}
 	pmt := models.CalcMonthlyPaymentForLoan(in.Principal, in.AlreadyPaid, in.AnnualRate, in.StartDate, in.EndDate)
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO loans (name,principal,annual_rate,start_date,end_date,monthly_payment,already_paid,
-		 account_id,default_account_id,loan_account_id,category_id,planned_id,is_active,created_at,updated_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,NULL,?,NULL,1,?,?)`,
+		 account_id,default_account_id,loan_account_id,category_id,planned_id,
+		 accounting_start_date,initial_accrued_interest,is_active,created_at,updated_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,NULL,?,NULL,?,?,1,?,?)`,
 		in.Name, in.Principal, in.AnnualRate, in.StartDate, in.EndDate, pmt,
 		in.AlreadyPaid, in.AccountID, in.DefaultAccountID,
-		in.CategoryID, now, now)
+		in.CategoryID, accountingStart, in.InitialAccruedInterest, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +189,7 @@ func (r *LoanRepo) RecalcPayment(ctx context.Context, id int64, planned *Planned
 
 	// Calculate current debt by replaying all days
 	today := models.TodayStr()
-	schedule := models.BuildDailySchedule(*loan, payments, loan.StartDate, today)
+	schedule := models.BuildDailySchedule(*loan, payments, loan.AccountingStartDate, today)
 
 	remainingPrincipal := schedule.CurrentDebt
 	if remainingPrincipal <= 0 {

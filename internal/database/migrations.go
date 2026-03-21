@@ -23,6 +23,8 @@ func Migrate(db *sql.DB) error {
 	addCol(db, "loans", "default_account_id", "INTEGER REFERENCES accounts(id) ON DELETE SET NULL")
 	addCol(db, "loans", "loan_account_id", "INTEGER REFERENCES accounts(id) ON DELETE SET NULL")
 	addCol(db, "loans", "planned_id", "INTEGER REFERENCES planned_transactions(id) ON DELETE SET NULL")
+	addCol(db, "loans", "accounting_start_date", "TEXT NOT NULL DEFAULT ''")
+	addCol(db, "loans", "initial_accrued_interest", "REAL NOT NULL DEFAULT 0")
 
 	// Drop old budget tables
 	for _, t := range []string{"budget_cells", "budget_rows", "budget_columns"} {
@@ -116,6 +118,8 @@ var ddl = []string{
 		loan_account_id   INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
 		category_id       INTEGER REFERENCES categories(id) ON DELETE SET NULL,
 		planned_id        INTEGER REFERENCES planned_transactions(id) ON DELETE SET NULL,
+		accounting_start_date TEXT NOT NULL DEFAULT '',
+		initial_accrued_interest REAL NOT NULL DEFAULT 0,
 		is_active         INTEGER NOT NULL DEFAULT 1,
 		created_at        TEXT    NOT NULL,
 		updated_at        TEXT    NOT NULL

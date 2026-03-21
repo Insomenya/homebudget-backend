@@ -112,10 +112,19 @@ func (r *PlannedRepo) Create(ctx context.Context, in models.CreatePlannedInput) 
 }
 
 func (r *PlannedRepo) Update(ctx context.Context, id int64, in models.UpdatePlannedInput) (*models.PlannedTransaction, error) {
+	old, err := r.GetByID(ctx, id)
+	if err != nil || old == nil {
+		return nil, err
+	}
+
 	now := ts()
 	originalDay := models.ExtractDay(in.StartDate)
+	nextDue := old.NextDue
+	if nextDue < in.StartDate {
+		nextDue = in.StartDate
+	}
 
-	_, err := r.db.ExecContext(ctx,
+	_, err = r.db.ExecContext(ctx,
 		`UPDATE planned_transactions
 		 SET name=?,amount=?,type=?,category_id=?,
 		     shared_group_id=?,paid_by_member_id=?,loan_id=?,
@@ -125,7 +134,7 @@ func (r *PlannedRepo) Update(ctx context.Context, id int64, in models.UpdatePlan
 		 WHERE id=?`,
 		in.Name, in.Amount, in.Type, in.CategoryID,
 		in.SharedGroupID, in.PaidByMemberID, in.LoanID,
-		in.Recurrence, in.StartDate, in.EndDate, in.StartDate,
+		in.Recurrence, in.StartDate, in.EndDate, nextDue,
 		originalDay, in.NotifyDaysBefore, in.OverdueDaysLimit,
 		now, id)
 	if err != nil {

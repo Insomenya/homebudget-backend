@@ -120,6 +120,8 @@ func (h *PlannedHandler) Activate(w http.ResponseWriter, r *http.Request) {
 
 // Reminders
 func (h *PlannedHandler) ListReminders(w http.ResponseWriter, r *http.Request) {
+	// Ensure reminders are актуальны даже без захода на dashboard.
+	h.repo.MaterializeReminders(r.Context())
 	items, err := h.repo.ListActiveReminders(r.Context())
 	if err != nil {
 		writeErr(w, 500, err.Error()); return

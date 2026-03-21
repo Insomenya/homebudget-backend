@@ -22,6 +22,8 @@ type Loan struct {
 	LoanAccountID    *int64  `json:"loan_account_id"`
 	CategoryID       *int64  `json:"category_id"`
 	PlannedID        *int64  `json:"planned_id"`
+	AccountingStartDate string `json:"accounting_start_date"`
+	InitialAccruedInterest float64 `json:"initial_accrued_interest"`
 	IsActive         bool    `json:"is_active"`
 	CreatedAt        string  `json:"created_at"`
 	UpdatedAt        string  `json:"updated_at"`
@@ -41,6 +43,8 @@ type CreateLoanInput struct {
 	AccountID        *int64  `json:"account_id"`
 	DefaultAccountID *int64  `json:"default_account_id"`
 	CategoryID       *int64  `json:"category_id"`
+	AccountingStartDate *string `json:"accounting_start_date"`
+	InitialAccruedInterest float64 `json:"initial_accrued_interest"`
 }
 
 type UpdateLoanInput struct {
@@ -77,6 +81,18 @@ func (in *CreateLoanInput) Validate() string {
 	startT, _ := time.Parse("2006-01-02", in.StartDate)
 	if !endT.After(startT) {
 		return "end_date must be after start_date"
+	}
+	if in.AccountingStartDate != nil && *in.AccountingStartDate != "" {
+		ast, err := time.Parse("2006-01-02", *in.AccountingStartDate)
+		if err != nil {
+			return "accounting_start_date must be YYYY-MM-DD"
+		}
+		if ast.Before(startT) {
+			return "accounting_start_date must be >= start_date"
+		}
+	}
+	if in.InitialAccruedInterest < 0 {
+		return "initial_accrued_interest cannot be negative"
 	}
 	return ""
 }
@@ -166,8 +182,20 @@ var monthNames = []string{
 // Multiple payments on the same day are summed.
 func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate string) *LoanDailySchedule {
 	start, _ := time.Parse("2006-01-02", loan.StartDate)
+	effectiveStart := start
+	if loan.AccountingStartDate != "" {
+		if accStart, err := time.Parse("2006-01-02", loan.AccountingStartDate); err == nil && accStart.After(effectiveStart) {
+			effectiveStart = accStart
+		}
+	}
 	from, _ := time.Parse("2006-01-02", fromDate)
 	to, _ := time.Parse("2006-01-02", toDate)
+	if from.Before(effectiveStart) {
+		from = effectiveStart
+	}
+	if to.Before(from) {
+		to = from
+	}
 
 	// Build payment map: sum all payments per day
 	payMap := make(map[string]float64)
@@ -179,11 +207,11 @@ func BuildDailySchedule(loan Loan, payments []Transaction, fromDate, toDate stri
 	if debt < 0 {
 		debt = 0
 	}
-	var accumInterest float64
+	accumInterest := loan.InitialAccruedInterest
 	var totalPaid, totalInterest float64
 
-	// Process days before the visible range (from start_date to from-1)
-	for d := start; d.Before(from); d = d.AddDate(0, 0, 1) {
+	// Process days before the visible range (from accounting start to from-1)
+	for d := effectiveStart; d.Before(from); d = d.AddDate(0, 0, 1) {
 		if debt <= 0.005 {
 			break
 		}
