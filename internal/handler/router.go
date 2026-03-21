@@ -1,3 +1,4 @@
+// FILE: internal/handler/router.go
 package handler
 
 import (
@@ -17,8 +18,8 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 	ah := &AccountHandler{repo: repos.Account}
 	ch := &CategoryHandler{repo: repos.Category}
 	gh := &SharedGroupHandler{repo: repos.SharedGroup}
-	th := &TransactionHandler{repo: repos.Transaction, planned: repos.Planned}
-	ph := &PlannedHandler{repo: repos.Planned, txRepo: repos.Transaction}
+	th := &TransactionHandler{repo: repos.Transaction, planned: repos.Planned, loan: repos.Loan}
+	ph := &PlannedHandler{repo: repos.Planned, txRepo: repos.Transaction, loanRepo: repos.Loan}
 	an := &AnalyticsHandler{repo: repos.Analytics}
 	mt := &MetaHandler{repo: repos.Lookup}
 	lh := &LoanHandler{

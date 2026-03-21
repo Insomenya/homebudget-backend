@@ -1,3 +1,4 @@
+// FILE: internal/handler/transaction_handler.go
 package handler
 
 import (
@@ -10,6 +11,7 @@ import (
 type TransactionHandler struct {
 	repo    *repository.TransactionRepo
 	planned *repository.PlannedRepo
+	loan    *repository.LoanRepo
 }
 
 func (h *TransactionHandler) List(w http.ResponseWriter, r *http.Request) {

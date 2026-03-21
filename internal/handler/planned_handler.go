@@ -1,3 +1,4 @@
+// FILE: internal/handler/planned_handler.go
 package handler
 
 import (
@@ -8,8 +9,9 @@ import (
 )
 
 type PlannedHandler struct {
-	repo   *repository.PlannedRepo
-	txRepo *repository.TransactionRepo
+	repo     *repository.PlannedRepo
+	txRepo   *repository.TransactionRepo
+	loanRepo *repository.LoanRepo
 }
 
 func (h *PlannedHandler) List(w http.ResponseWriter, r *http.Request) {
