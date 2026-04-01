@@ -21,6 +21,7 @@ type Loan struct {
 	DefaultAccountID *int64  `json:"default_account_id"`
 	LoanAccountID    *int64  `json:"loan_account_id"`
 	CategoryID       *int64  `json:"category_id"`
+	LoanCategoryID   *int64  `json:"loan_category_id"`
 	PlannedID        *int64  `json:"planned_id"`
 	AccountingStartDate string `json:"accounting_start_date"`
 	InitialAccruedInterest float64 `json:"initial_accrued_interest"`

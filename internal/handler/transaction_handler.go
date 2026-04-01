@@ -61,6 +61,14 @@ func (h *TransactionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if msg := in.Validate(); msg != "" {
 		writeErr(w, 422, msg); return
 	}
+	// Auto-detect loan_id from category_id: if the category is a
+	// special loan category (loan_category_id), link the transaction
+	// to that loan so the recalc callback fires.
+	if in.LoanID == nil && in.CategoryID != nil {
+		if loanID := h.loan.GetLoanByCategoryID(r.Context(), *in.CategoryID); loanID != nil {
+			in.LoanID = loanID
+		}
+	}
 	t, err := h.repo.Create(r.Context(), in)
 	if err != nil {
 		if isFKError(err) {
@@ -82,6 +90,12 @@ func (h *TransactionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := in.Validate(); msg != "" {
 		writeErr(w, 422, msg); return
+	}
+	// Auto-detect loan_id from new category_id
+	if in.LoanID == nil && in.CategoryID != nil {
+		if loanID := h.loan.GetLoanByCategoryID(r.Context(), *in.CategoryID); loanID != nil {
+			in.LoanID = loanID
+		}
 	}
 	t, err := h.repo.Update(r.Context(), id, in)
 	if err != nil {

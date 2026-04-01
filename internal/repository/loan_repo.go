@@ -14,15 +14,15 @@ func NewLoanRepo(db *sql.DB) *LoanRepo { return &LoanRepo{db: db} }
 
 const loanCols = `id, name, principal, annual_rate, start_date, end_date,
 	monthly_payment, already_paid, account_id, default_account_id, loan_account_id,
-	category_id, planned_id, accounting_start_date, initial_accrued_interest, is_active, created_at, updated_at`
+	category_id, loan_category_id, planned_id, accounting_start_date, initial_accrued_interest, is_active, created_at, updated_at`
 
 func scanLoan(s scannable) (models.Loan, error) {
 	var l models.Loan
-	var accID, defAccID, loanAccID, catID, plannedID sql.NullInt64
+	var accID, defAccID, loanAccID, catID, loanCatID, plannedID sql.NullInt64
 	var active int
 	err := s.Scan(&l.ID, &l.Name, &l.Principal, &l.AnnualRate,
 		&l.StartDate, &l.EndDate, &l.MonthlyPayment, &l.AlreadyPaid,
-		&accID, &defAccID, &loanAccID, &catID, &plannedID, &l.AccountingStartDate, &l.InitialAccruedInterest, &active,
+		&accID, &defAccID, &loanAccID, &catID, &loanCatID, &plannedID, &l.AccountingStartDate, &l.InitialAccruedInterest, &active,
 		&l.CreatedAt, &l.UpdatedAt)
 	if accID.Valid {
 		l.AccountID = &accID.Int64
@@ -35,6 +35,9 @@ func scanLoan(s scannable) (models.Loan, error) {
 	}
 	if catID.Valid {
 		l.CategoryID = &catID.Int64
+	}
+	if loanCatID.Valid {
+		l.LoanCategoryID = &loanCatID.Int64
 	}
 	if plannedID.Valid {
 		l.PlannedID = &plannedID.Int64
@@ -76,6 +79,18 @@ func (r *LoanRepo) GetByID(ctx context.Context, id int64) (*models.Loan, error) 
 		return nil, err
 	}
 	return &l, nil
+}
+
+// GetLoanByCategoryID returns the loan whose special category matches the given category ID.
+// Returns nil if no such loan exists.
+func (r *LoanRepo) GetLoanByCategoryID(ctx context.Context, categoryID int64) *int64 {
+	var loanID int64
+	err := r.db.QueryRowContext(ctx,
+		"SELECT id FROM loans WHERE loan_category_id=?", categoryID).Scan(&loanID)
+	if err != nil {
+		return nil
+	}
+	return &loanID
 }
 
 func (r *LoanRepo) Create(ctx context.Context, in models.CreateLoanInput) (*models.Loan, error) {
@@ -123,6 +138,12 @@ func (r *LoanRepo) SetPlannedID(ctx context.Context, loanID, plannedID int64) er
 	return err
 }
 
+func (r *LoanRepo) SetLoanCategoryID(ctx context.Context, loanID, categoryID int64) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE loans SET loan_category_id=? WHERE id=?", categoryID, loanID)
+	return err
+}
+
 func (r *LoanRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM loans WHERE id=?", id)
 	return err
@@ -130,9 +151,9 @@ func (r *LoanRepo) Delete(ctx context.Context, id int64) error {
 
 // DeleteWithCleanup удаляет кредит вместе с:
 // - отложенным платежом (и его неисполненными напоминаниями)
-// - скрытым loan_account (если нет транзакций, иначе оставляем)
+// - специальной категорией для платежей
 // Проведённые транзакции НЕ удаляются.
-func (r *LoanRepo) DeleteWithCleanup(ctx context.Context, id int64, planned *PlannedRepo, accounts *AccountRepo) error {
+func (r *LoanRepo) DeleteWithCleanup(ctx context.Context, id int64, planned *PlannedRepo, categories *CategoryRepo) error {
 	loan, err := r.GetByID(ctx, id)
 	if err != nil || loan == nil {
 		return err
@@ -143,14 +164,14 @@ func (r *LoanRepo) DeleteWithCleanup(ctx context.Context, id int64, planned *Pla
 		planned.Delete(ctx, *loan.PlannedID)
 	}
 
-	// Delete loan account if no transactions reference it
-	if loan.LoanAccountID != nil {
+	// Delete loan category if no other transactions reference it
+	if loan.LoanCategoryID != nil {
 		var cnt int
 		r.db.QueryRowContext(ctx,
-			"SELECT COUNT(*) FROM transactions WHERE account_id=? OR to_account_id=?",
-			*loan.LoanAccountID, *loan.LoanAccountID).Scan(&cnt)
+			"SELECT COUNT(*) FROM transactions WHERE category_id=?",
+			*loan.LoanCategoryID).Scan(&cnt)
 		if cnt == 0 {
-			accounts.Delete(ctx, *loan.LoanAccountID)
+			categories.Delete(ctx, *loan.LoanCategoryID)
 		}
 	}
 

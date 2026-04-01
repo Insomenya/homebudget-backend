@@ -9,10 +9,10 @@ import (
 )
 
 type LoanHandler struct {
-	repo    *repository.LoanRepo
-	account *repository.AccountRepo
-	planned *repository.PlannedRepo
-	tx      *repository.TransactionRepo
+	repo     *repository.LoanRepo
+	category *repository.CategoryRepo
+	planned  *repository.PlannedRepo
+	tx       *repository.TransactionRepo
 }
 
 func (h *LoanHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -75,28 +75,25 @@ func (h *LoanHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Create hidden loan account (всегда)
-	// Нужен member_id — берём из default_account или первый member
-	var memberID int64 = 1
-	if body.DefaultAccountID != nil {
-		acc, _ := h.account.GetByID(ctx, *body.DefaultAccountID)
-		if acc != nil {
-			memberID = acc.MemberID
+	// 2. Create special child category for loan payments
+	var catID *int64
+	if body.CategoryID != nil {
+		parent, _ := h.category.GetByID(ctx, *body.CategoryID)
+		icon := ""
+		if parent != nil {
+			icon = parent.Icon
+		}
+		cat, err := h.category.Create(ctx, models.CreateCategoryInput{
+			Name:     fmt.Sprintf("Кредит: %s", loan.Name),
+			Type:     "expense",
+			Icon:     icon,
+			ParentID: body.CategoryID,
+		})
+		if err == nil && cat != nil {
+			catID = &cat.ID
+			h.repo.SetLoanCategoryID(ctx, loan.ID, cat.ID)
 		}
 	}
-
-	loanAcc, err := h.account.Create(ctx, models.CreateAccountInput{
-		Name:     fmt.Sprintf("Кредит: %s", loan.Name),
-		Type:     "credit",
-		Currency: "RUB",
-		MemberID: memberID,
-		IsHidden: true,
-	})
-	if err != nil {
-		writeErr(w, 500, "loan account: "+err.Error())
-		return
-	}
-	h.repo.SetLoanAccountID(ctx, loan.ID, loanAcc.ID)
 
 	// 3. Credit to account (зачислить деньги)
 	if body.CreditToAccount && body.AccountID != nil {
@@ -106,7 +103,7 @@ func (h *LoanHandler) Create(w http.ResponseWriter, r *http.Request) {
 			Description: fmt.Sprintf("Получение кредита: %s", loan.Name),
 			Type:        models.TxTypeIncome,
 			AccountID:   body.AccountID,
-			CategoryID:  loan.CategoryID,
+			CategoryID:  catID,
 		}
 		h.tx.Create(ctx, txIn)
 	}
@@ -134,7 +131,7 @@ func (h *LoanHandler) Create(w http.ResponseWriter, r *http.Request) {
 			Name:             fmt.Sprintf("Платёж: %s", loan.Name),
 			Amount:           loan.MonthlyPayment,
 			Type:             models.TxTypeExpense,
-			CategoryID:       loan.CategoryID,
+			CategoryID:       catID,
 			LoanID:           &loan.ID,
 			Recurrence:       models.RecurrenceMonthly,
 			StartDate:        plannedStart,
@@ -181,7 +178,7 @@ func (h *LoanHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid id")
 		return
 	}
-	if err := h.repo.DeleteWithCleanup(r.Context(), id, h.planned, h.account); err != nil {
+	if err := h.repo.DeleteWithCleanup(r.Context(), id, h.planned, h.category); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}

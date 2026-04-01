@@ -47,11 +47,13 @@ func (r *AnalyticsRepo) CategoryBreakdown(ctx context.Context, f models.Analytic
 	where := strings.Join(conds, " AND ")
 
 	q := fmt.Sprintf(`
-		SELECT c.id, c.name, c.icon, c.parent_id, COALESCE(SUM(t.amount), 0)
+		SELECT COALESCE(c.parent_id, c.id) as pid,
+		       COALESCE(p.name, c.name), COALESCE(p.icon, c.icon), SUM(t.amount)
 		FROM transactions t
 		JOIN categories c ON c.id = t.category_id
+		LEFT JOIN categories p ON c.parent_id = p.id
 		WHERE %s
-		GROUP BY c.id, c.name, c.icon, c.parent_id
+		GROUP BY pid
 		ORDER BY SUM(t.amount) DESC`, where)
 
 	rows, err := r.db.QueryContext(ctx, q, args...)

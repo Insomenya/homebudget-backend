@@ -60,6 +60,9 @@ func (in *CreateTransactionInput) Validate() string {
 		if in.CategoryID == nil {
 			return "category_id required for expense"
 		}
+		if in.AccountID == nil && in.SharedGroupID == nil {
+			return "account_id required for expense"
+		}
 	case TxTypeIncome:
 		if in.AccountID == nil {
 			return "account_id required for income"
