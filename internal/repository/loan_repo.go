@@ -216,9 +216,10 @@ func (r *LoanRepo) RecalcPayment(ctx context.Context, id int64, planned *Planned
 	if remainingPrincipal <= 0 {
 		// Loan is paid off
 		now := ts()
+		alreadyPaid := loan.Principal
 		r.db.ExecContext(ctx,
-			"UPDATE loans SET monthly_payment=0, updated_at=? WHERE id=?",
-			now, id)
+			"UPDATE loans SET monthly_payment=?, already_paid=?, updated_at=? WHERE id=?",
+			0.0, alreadyPaid, now, id)
 		if loan.PlannedID != nil {
 			planned.UpdateAmount(ctx, *loan.PlannedID, 0)
 		}
@@ -234,9 +235,10 @@ func (r *LoanRepo) RecalcPayment(ctx context.Context, id int64, planned *Planned
 	newPayment := models.CalcMonthlyPayment(remainingPrincipal, loan.AnnualRate, remainingMonths)
 
 	now := ts()
+	alreadyPaid := loan.Principal - remainingPrincipal
 	r.db.ExecContext(ctx,
-		"UPDATE loans SET monthly_payment=?, updated_at=? WHERE id=?",
-		newPayment, now, id)
+		"UPDATE loans SET monthly_payment=?, already_paid=?, updated_at=? WHERE id=?",
+		newPayment, alreadyPaid, now, id)
 
 	// Update planned amount
 	if loan.PlannedID != nil {
