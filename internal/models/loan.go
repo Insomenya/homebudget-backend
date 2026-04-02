@@ -17,6 +17,7 @@ type Loan struct {
 	EndDate          string  `json:"end_date"`
 	MonthlyPayment   float64 `json:"monthly_payment"`
 	AlreadyPaid      float64 `json:"already_paid"`
+	RemainingDebt    float64 `json:"remaining_debt"`
 	AccountID        *int64  `json:"account_id"`
 	DefaultAccountID *int64  `json:"default_account_id"`
 	LoanAccountID    *int64  `json:"loan_account_id"`

@@ -152,6 +152,30 @@ func (h *PlannedHandler) ExecuteReminder(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, 200, tx)
 }
 
+// ExecuteNow executes a planned payment immediately by planned_id.
+// Executes the payment directly (no reminder needed), creating a transaction and advancing next_due.
+func (h *PlannedHandler) ExecuteNow(w http.ResponseWriter, r *http.Request) {
+	plannedID, err := urlID(r)
+	if err != nil {
+		writeErr(w, 400, "invalid id"); return
+	}
+
+	var in models.ExecuteReminderInput
+	if err := readJSON(r, &in); err != nil {
+		in = models.ExecuteReminderInput{}
+	}
+
+	// Execute directly via repo
+	tx, err := h.repo.ExecuteNow(r.Context(), plannedID, in, h.txRepo, h.loanRepo)
+	if err != nil {
+		writeErr(w, 500, err.Error()); return
+	}
+	if tx == nil {
+		writeErr(w, 404, "planned payment not found"); return
+	}
+	writeJSON(w, 200, tx)
+}
+
 func (h *PlannedHandler) UndoReminder(w http.ResponseWriter, r *http.Request) {
 	id, err := urlID(r)
 	if err != nil {

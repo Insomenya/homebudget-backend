@@ -26,6 +26,9 @@ func Migrate(db *sql.DB) error {
 	addCol(db, "loans", "accounting_start_date", "TEXT NOT NULL DEFAULT ''")
 	addCol(db, "loans", "initial_accrued_interest", "REAL NOT NULL DEFAULT 0")
 	addCol(db, "loans", "loan_category_id", "INTEGER REFERENCES categories(id) ON DELETE SET NULL")
+	addCol(db, "loans", "remaining_debt", "REAL NOT NULL DEFAULT 0")
+	// Init existing loans: remaining_debt = principal minus pre-accounting payments
+	db.Exec("UPDATE loans SET remaining_debt = principal - already_paid WHERE remaining_debt = 0")
 
 	// Drop old budget tables
 	for _, t := range []string{"budget_cells", "budget_rows", "budget_columns"} {
@@ -114,6 +117,7 @@ var ddl = []string{
 		end_date          TEXT    NOT NULL,
 		monthly_payment   REAL    NOT NULL,
 		already_paid      REAL    NOT NULL DEFAULT 0,
+		remaining_debt    REAL    NOT NULL DEFAULT 0,
 		account_id        INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
 		default_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
 		loan_account_id   INTEGER REFERENCES accounts(id) ON DELETE SET NULL,

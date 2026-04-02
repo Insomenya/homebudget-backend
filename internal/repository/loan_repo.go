@@ -4,6 +4,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"log"
 
 	"homebudget/internal/models"
 )
@@ -12,8 +13,15 @@ type LoanRepo struct{ db *sql.DB }
 
 func NewLoanRepo(db *sql.DB) *LoanRepo { return &LoanRepo{db: db} }
 
+func (r *LoanRepo) setLoanRecalc(id int64, payment, remainingDebt float64, updatedAt string) error {
+	_, err := r.db.ExecContext(context.Background(),
+		"UPDATE loans SET monthly_payment=?, remaining_debt=?, updated_at=? WHERE id=?",
+		payment, remainingDebt, updatedAt, id)
+	return err
+}
+
 const loanCols = `id, name, principal, annual_rate, start_date, end_date,
-	monthly_payment, already_paid, account_id, default_account_id, loan_account_id,
+	monthly_payment, already_paid, remaining_debt, account_id, default_account_id, loan_account_id,
 	category_id, loan_category_id, planned_id, accounting_start_date, initial_accrued_interest, is_active, created_at, updated_at`
 
 func scanLoan(s scannable) (models.Loan, error) {
@@ -21,7 +29,7 @@ func scanLoan(s scannable) (models.Loan, error) {
 	var accID, defAccID, loanAccID, catID, loanCatID, plannedID sql.NullInt64
 	var active int
 	err := s.Scan(&l.ID, &l.Name, &l.Principal, &l.AnnualRate,
-		&l.StartDate, &l.EndDate, &l.MonthlyPayment, &l.AlreadyPaid,
+		&l.StartDate, &l.EndDate, &l.MonthlyPayment, &l.AlreadyPaid, &l.RemainingDebt,
 		&accID, &defAccID, &loanAccID, &catID, &loanCatID, &plannedID, &l.AccountingStartDate, &l.InitialAccruedInterest, &active,
 		&l.CreatedAt, &l.UpdatedAt)
 	if accID.Valid {
@@ -100,13 +108,17 @@ func (r *LoanRepo) Create(ctx context.Context, in models.CreateLoanInput) (*mode
 		accountingStart = *in.AccountingStartDate
 	}
 	pmt := models.CalcMonthlyPaymentForLoan(in.Principal, in.AlreadyPaid, in.AnnualRate, in.StartDate, in.EndDate)
+	remainingDebt := in.Principal - in.AlreadyPaid
+	if remainingDebt < 0 {
+		remainingDebt = 0
+	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO loans (name,principal,annual_rate,start_date,end_date,monthly_payment,already_paid,
+		`INSERT INTO loans (name,principal,annual_rate,start_date,end_date,monthly_payment,already_paid,remaining_debt,
 		 account_id,default_account_id,loan_account_id,category_id,planned_id,
 		 accounting_start_date,initial_accrued_interest,is_active,created_at,updated_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,NULL,?,NULL,?,?,1,?,?)`,
+		 VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,NULL,?,?,1,?,?)`,
 		in.Name, in.Principal, in.AnnualRate, in.StartDate, in.EndDate, pmt,
-		in.AlreadyPaid, in.AccountID, in.DefaultAccountID,
+		in.AlreadyPaid, remainingDebt, in.AccountID, in.DefaultAccountID,
 		in.CategoryID, accountingStart, in.InitialAccruedInterest, now, now)
 	if err != nil {
 		return nil, err
@@ -208,37 +220,53 @@ func (r *LoanRepo) RecalcPayment(ctx context.Context, id int64, planned *Planned
 		return err
 	}
 
-	// Calculate current debt by replaying all days
+	// Calculate current debt by replaying all days.
+	// toDate must cover the latest payment date, not just current day,
+	// so that future-dated payments are included in the calculation.
 	today := models.TodayStr()
-	schedule := models.BuildDailySchedule(*loan, payments, loan.AccountingStartDate, today)
+	toDate := today
+	if len(payments) > 0 {
+		lastPayment := payments[len(payments)-1].Date
+		if lastPayment > toDate {
+			toDate = lastPayment
+		}
+	}
+	schedule := models.BuildDailySchedule(*loan, payments, loan.AccountingStartDate, toDate)
 
-	remainingPrincipal := schedule.CurrentDebt
-	if remainingPrincipal <= 0 {
+	remainingDebt := schedule.CurrentDebt
+	if remainingDebt <= 0 {
 		// Loan is paid off
 		now := ts()
-		alreadyPaid := loan.Principal
-		r.db.ExecContext(ctx,
-			"UPDATE loans SET monthly_payment=?, already_paid=?, updated_at=? WHERE id=?",
-			0.0, alreadyPaid, now, id)
+		if err := r.setLoanRecalc(id, 0.0, 0.0, now); err != nil {
+			log.Printf("❌ loan %d: recalc update failed: %v", id, err)
+		}
 		if loan.PlannedID != nil {
 			planned.UpdateAmount(ctx, *loan.PlannedID, 0)
 		}
 		return nil
 	}
 
-	// Remaining months from today to end_date
-	remainingMonths := models.CalcTermMonths(today, loan.EndDate)
+	// Remaining months: from the later of today or lastPaymentDate to end_date
+	refDate := today
+	if len(payments) > 0 {
+		lp := payments[len(payments)-1].Date
+		if lp > refDate {
+			refDate = lp
+		}
+	}
+	remainingMonths := models.CalcTermMonths(refDate, loan.EndDate)
 	if remainingMonths < 1 {
 		remainingMonths = 1
 	}
 
-	newPayment := models.CalcMonthlyPayment(remainingPrincipal, loan.AnnualRate, remainingMonths)
+	newPayment := models.CalcMonthlyPayment(remainingDebt, loan.AnnualRate, remainingMonths)
+
+	log.Printf("🔄 loan %d: remainingDebt=%.2f, months=%d, newPayment=%.2f", id, remainingDebt, remainingMonths, newPayment)
 
 	now := ts()
-	alreadyPaid := loan.Principal - remainingPrincipal
-	r.db.ExecContext(ctx,
-		"UPDATE loans SET monthly_payment=?, already_paid=?, updated_at=? WHERE id=?",
-		newPayment, alreadyPaid, now, id)
+	if err := r.setLoanRecalc(id, newPayment, remainingDebt, now); err != nil {
+		log.Printf("❌ loan %d: recalc update failed: %v", id, err)
+	}
 
 	// Update planned amount
 	if loan.PlannedID != nil {

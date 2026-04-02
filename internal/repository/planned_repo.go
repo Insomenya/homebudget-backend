@@ -334,6 +334,54 @@ func (r *PlannedRepo) ExecuteReminder(ctx context.Context, reminderID int64, in 
 	return tx, nil
 }
 
+// ExecuteNow создаёт транзакцию напрямую по planned_id (без напоминания).
+// Если есть активный reminder для этого planned — помечает его выполненным.
+func (r *PlannedRepo) ExecuteNow(ctx context.Context, plannedID int64, in models.ExecuteReminderInput, txRepo *TransactionRepo, loanRepo interface{}) (*models.Transaction, error) {
+	pt, err := r.GetByID(ctx, plannedID)
+	if err != nil || pt == nil {
+		return nil, err
+	}
+
+	amount := in.Amount
+	if amount <= 0 {
+		amount = pt.Amount
+	}
+	date := in.Date
+	if date == "" {
+		date = pt.NextDue
+	}
+
+	txIn := models.CreateTransactionInput{
+		Date:           date,
+		Amount:         amount,
+		Description:    pt.Name,
+		Type:           pt.Type,
+		AccountID:      in.AccountID,
+		CategoryID:     pt.CategoryID,
+		SharedGroupID:  pt.SharedGroupID,
+		PaidByMemberID: pt.PaidByMemberID,
+		LoanID:         pt.LoanID,
+		ReminderID:     nil,
+	}
+
+	tx, err := txRepo.Create(ctx, txIn)
+	if err != nil {
+		return nil, err
+	}
+
+	// Mark any active reminder as executed
+	dbTx, _ := r.db.BeginTx(ctx, nil)
+	defer dbTx.Commit()
+	dbTx.ExecContext(ctx,
+		"UPDATE planned_reminders SET is_executed=1, transaction_id=? WHERE planned_id=? AND is_executed=0",
+		tx.ID, plannedID)
+
+	// Advance planned next_due
+	r.advanceNextDue(ctx, pt)
+
+	return tx, nil
+}
+
 // UndoReminder отменяет проводку: удаляет транзакцию, возвращает напоминание в active,
 // возвращает next_due к prev_next_due.
 func (r *PlannedRepo) UndoReminder(ctx context.Context, reminderID int64, txRepo *TransactionRepo) error {

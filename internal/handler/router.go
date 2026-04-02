@@ -100,6 +100,7 @@ func NewRouter(repos *repository.Repos, corsOrigin string) *chi.Mux {
 			pr.Delete("/{id}", ph.Delete)
 			pr.Post("/{id}/activate", ph.Activate)
 			pr.Post("/{id}/execute", ph.ExecuteReminder)
+			pr.Post("/{id}/execute-now", ph.ExecuteNow)
 			pr.Post("/{id}/undo", ph.UndoReminder)
 		})
 
