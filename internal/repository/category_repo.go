@@ -11,18 +11,21 @@ type CategoryRepo struct{ db *sql.DB }
 
 func NewCategoryRepo(db *sql.DB) *CategoryRepo { return &CategoryRepo{db: db} }
 
-const catCols = `id, name, type, icon, parent_id, sort_order, is_archived, created_at, updated_at`
+const catCols = `id, name, type, icon, parent_id, sort_order, is_archived,
+	CASE WHEN id IN (SELECT loan_category_id FROM loans WHERE loan_category_id IS NOT NULL) THEN 1 ELSE 0 END as is_loan,
+	created_at, updated_at`
 
 func scanCategory(s scannable) (models.Category, error) {
 	var c models.Category
 	var pid sql.NullInt64
-	var arch int
+	var arch, isLoan int
 	err := s.Scan(&c.ID, &c.Name, &c.Type, &c.Icon,
-		&pid, &c.SortOrder, &arch, &c.CreatedAt, &c.UpdatedAt)
+		&pid, &c.SortOrder, &arch, &isLoan, &c.CreatedAt, &c.UpdatedAt)
 	if pid.Valid {
 		c.ParentID = &pid.Int64
 	}
 	c.IsArchived = arch == 1
+	c.IsLoan = isLoan == 1
 	return c, err
 }
 

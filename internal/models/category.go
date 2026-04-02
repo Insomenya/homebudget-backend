@@ -13,6 +13,7 @@ type Category struct {
 	ParentID   *int64 `json:"parent_id"`
 	SortOrder  int    `json:"sort_order"`
 	IsArchived bool   `json:"is_archived"`
+	IsLoan     bool   `json:"is_loan"`
 	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
 }
