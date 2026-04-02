@@ -67,12 +67,8 @@ func (r *AnalyticsRepo) CategoryBreakdown(ctx context.Context, f models.Analytic
 
 	for rows.Next() {
 		var cs models.CategorySlice
-		var pid sql.NullInt64
-		if err := rows.Scan(&cs.CategoryID, &cs.CategoryName, &cs.CategoryIcon, &pid, &cs.Amount); err != nil {
+		if err := rows.Scan(&cs.CategoryID, &cs.CategoryName, &cs.CategoryIcon, &cs.Amount); err != nil {
 			return nil, err
-		}
-		if pid.Valid {
-			cs.ParentID = &pid.Int64
 		}
 		total += cs.Amount
 		items = append(items, cs)
